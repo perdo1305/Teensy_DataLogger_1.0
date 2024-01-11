@@ -11,6 +11,12 @@
 #include <SPI.h>
 #include <TimeLib.h>
 
+#include "Watchdog_t4.h"
+
+WDT_T4<WDT1> wdt;
+
+#define DataLogger_CanId 0x200
+
 #define ENABLE_INTERRUPT  // uncomment to always log to sd card //fode sd cards
 #define OPAMP_PIN 4       // pin for ampop interrupt
 #define BUTTON_PIN 5      // pin for button interrupt
@@ -66,10 +72,14 @@ bool canrx_status = false;
 FlexCAN_T4<CAN1, RX_SIZE_256, TX_SIZE_16> can1;
 // FlexCAN_T4<CAN2, RX_SIZE_256, TX_SIZE_16> can2;
 
-CAN_message_t rxmsg; // struct to hold received CAN message
-CAN_message_t txmsg; // struct to hold sent CAN message
+CAN_message_t rxmsg;  // struct to hold received CAN message
+CAN_message_t txmsg;  // struct to hold sent CAN message
 
 volatile bool DataLoggerActive = false;
+
+void wdtCallback() {
+  Serial.println("FEED THE DOG SOON, OR RESET!");
+}
 
 void setup() {
     // set the Time library to use Teensy 3.0's RTC to keep time
@@ -79,6 +89,13 @@ void setup() {
     pinMode(LED_BUILTIN, OUTPUT);     // initialize the built-in LED pin as an output
     digitalWrite(LED_BUILTIN, HIGH);  // turn on the built in led
     /*#######################################*/
+    /*################ WDT ##################*/
+    WDT_timings_t config;
+    config.trigger = 5;  /* in seconds, 0->128 Warning trigger before timeout */ 
+    config.timeout = 10; /* in seconds, 0->128 Timeout to reset */
+    config.callback = wdtCallback;
+    wdt.begin(config);
+    /*#########################################*/
 
     unsigned long OV_millis = 0;
     OV_millis = millis();
@@ -123,8 +140,8 @@ void setup() {
         file_num_int = 0;
         file_num_int = atoi(str);
         file_num_plus_one = (int)file_num_int + 1;
-        //TODO colocar cabeçalho descritivo,ex started by voltage, rpm, etc
-        //TODO nome do ficheiro com descritivo de start
+        // TODO colocar cabeçalho descritivo,ex started by voltage, rpm, etc
+        // TODO nome do ficheiro com descritivo de start
 
         dataFile.close();
 
@@ -198,6 +215,7 @@ void setup() {
 }
 
 void loop() {
+    wdt.feed();
     RTC_update_by_serial();
     MCU_heartbeat();  // blink the built in led at 3.3Hz
     // CAN_hearbeat();  // blink the can bus rx led at 3.3Hz
@@ -207,7 +225,7 @@ void loop() {
     if (can1.read(rxmsg)) {
         digitalToggle(LED2_pin);
 
-        receiveStart(rxmsg, 0x201, 0);
+        receiveStart(rxmsg, 0x201, 0);E
         receiveMarker(rxmsg, 0x202, 0);
         builDataString(rxmsg);
 
@@ -370,7 +388,7 @@ String csvSuffixer(String value) {
  * @return void
  */
 void receiveStart(CAN_message_t msg, uint16_t id_start, uint16_t buf_index) {
-    if (msg.id == id_start) {//TODO RPM> tal comecar o logging ou tensao do inversor etc
+    if (msg.id == id_start) {  // TODO RPM> tal comecar o logging ou tensao do inversor etc
         msg.buf[buf_index] >= 1 ? logging_active = true : logging_active = false;
     }
 }
@@ -394,7 +412,7 @@ void sendDLstatus() {
     if (currentMillis[0] - previousMillis[0] > 5) {
         previousMillis[0] = currentMillis[0];
         // DATA LOGGER STATUS
-        txmsg.id = 0x200;
+        txmsg.id = DataLogger_CanId;
         txmsg.len = 8;
         txmsg.buf[0] = DataLoggerActive;  // 1 = data logger active, 0 = data logger inactive
         txmsg.buf[1] = logging_active;    // 1 = logging active, 0 = logging inactive
