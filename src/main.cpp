@@ -9,11 +9,15 @@
 #include <FlexCAN_T4.h>
 #include <SD.h>
 #include <SPI.h>
+#include <U8g2lib.h>
+#include <Wire.h>
 #include <TimeLib.h>
 
 #include "Watchdog_t4.h"
 
 WDT_T4<WDT1> wdt;
+
+U8X8_SSD1306_128X64_NONAME_HW_I2C u8x8 (SCL,SDA, U8X8_PIN_NONE);
 
 #define DataLogger_CanId 0x200
 
@@ -212,20 +216,23 @@ void setup() {
     digitalWrite(LED2_pin, HIGH);  // turn on the can bus rx led
     /*#####################################################*/
     DataLoggerActive = true;
+
+    u8x8.begin();
+    u8x8.setPowerSave(0);
 }
 
 void loop() {
-    wdt.feed();
-    RTC_update_by_serial();
-    MCU_heartbeat();  // blink the built in led at 3.3Hz
-    // CAN_hearbeat();  // blink the can bus rx led at 3.3Hz
+    wdt.feed(); // Feed the whatchdog timer
+    RTC_update_by_serial(); 
+    MCU_heartbeat();  // Blink the built in led at 3.3Hz
+    // CAN_hearbeat();  // Blink the can bus rx led at 3.3Hz
 
     sendDLstatus();  // send the data logger status to the CAN bus
 
     if (can1.read(rxmsg)) {
         digitalToggle(LED2_pin);
 
-        receiveStart(rxmsg, 0x201, 0);E
+        receiveStart(rxmsg, 0x201, 0);
         receiveMarker(rxmsg, 0x202, 0);
         builDataString(rxmsg);
 
@@ -425,4 +432,39 @@ void sendDLstatus() {
 
         can1.write(txmsg);
     }
+}
+
+
+void displayWelcome (){
+    u8x8.setFont(u8x8_font_amstrad_cpc_extended_f);
+    u8x8.drawString(10, 0, "L.A.R.T");
+    u8x8.drawString(0, 1, "Data Logger");
+    u8x8.drawString(0, 2, "v1.0");
+    u8x8.drawString(0, 3, "by Perdu Ferreira");
+    u8x8.drawString(0, 4, "and David Moniz");
+    u8x8.drawString(0, 5, " ");
+    u8x8.drawString(0, 6, " ");
+    u8x8.drawString(0, 7, " ");
+}
+
+void displayDataLoggerStatus(){
+    u8x8.setFont(u8x8_font_amstrad_cpc_extended_f);
+    u8x8.setInverseFont(1);
+    u8x8.drawString(0, 0, "# Data Logger Status #");
+    u8x8.setInverseFont(0);
+    if (canrx_status){
+        u8x8.drawString(0, 1, "CAN1: OK");
+    } else {
+        u8x8.drawString(0, 1, "CAN1: ERROR");
+    }
+    u8x8.drawString(0, 2, "CAN2: ---");
+    if (logging_active){
+        u8x8.drawString(0, 3, "Logging: ON");
+    } else {
+        u8x8.drawString(0, 3, "Logging: OFF");
+    }
+    u8x8.drawString(0, 4, " ");
+    u8x8.drawString(0, 5, " ");
+    u8x8.drawString(0, 6, " ");
+    u8x8.drawString(0, 7, " ");
 }
