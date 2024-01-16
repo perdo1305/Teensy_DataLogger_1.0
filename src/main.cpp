@@ -9,15 +9,15 @@
 #include <FlexCAN_T4.h>
 #include <SD.h>
 #include <SPI.h>
+#include <TimeLib.h>
 #include <U8g2lib.h>
 #include <Wire.h>
-#include <TimeLib.h>
 
 #include "Watchdog_t4.h"
 
 WDT_T4<WDT1> wdt;
 
-U8X8_SSD1306_128X64_NONAME_HW_I2C u8x8 (SCL,SDA, U8X8_PIN_NONE);
+U8X8_SSD1306_128X64_NONAME_HW_I2C u8x8(SCL, SDA, U8X8_PIN_NONE);
 
 #define DataLogger_CanId 0x200
 
@@ -54,6 +54,8 @@ void sendDLstatus(void);
 void receiveStart(CAN_message_t msg, uint16_t id_start, uint16_t buf_index);
 void receiveMarker(CAN_message_t msg, uint16_t id_start, uint16_t buf_index);
 void builDataString(CAN_message_t msg);
+void displayWelcome(void);
+void displayDataLoggerStatus(void);
 //_________________________________________________________________________________________________
 //_________________________________________________________________________________________________
 
@@ -62,8 +64,8 @@ volatile bool logging_active = false;
 String dataString = "";
 int file_num_int = 0;  // keep track of the datalog.txt file number
 int file_num_plus_one = 0;
-File* dataFile_ptr;  // pointer to the datafile to be closed by the interrupt
-
+File* dataFile_ptr;           // pointer to the datafile to be closed by the interrupt
+bool SD_card_status = false;  // if the SD card is present and initialized
 // Millis variables
 unsigned long currentMillis[10] = {};
 unsigned long previousMillis[10] = {};
@@ -72,7 +74,8 @@ unsigned long previousMillis[10] = {};
 unsigned long startMillis = millis();  // start time
 
 // CAN BUS
-bool canrx_status = false;
+bool can1rx_status = false;
+bool can2rx_status = false;
 FlexCAN_T4<CAN1, RX_SIZE_256, TX_SIZE_16> can1;
 // FlexCAN_T4<CAN2, RX_SIZE_256, TX_SIZE_16> can2;
 
@@ -82,7 +85,7 @@ CAN_message_t txmsg;  // struct to hold sent CAN message
 volatile bool DataLoggerActive = false;
 
 void wdtCallback() {
-  Serial.println("FEED THE DOG SOON, OR RESET!");
+    Serial.println("FEED THE DOG SOON, OR RESET!");
 }
 
 void setup() {
@@ -95,7 +98,7 @@ void setup() {
     /*#######################################*/
     /*################ WDT ##################*/
     WDT_timings_t config;
-    config.trigger = 5;  /* in seconds, 0->128 Warning trigger before timeout */ 
+    config.trigger = 5;  /* in seconds, 0->128 Warning trigger before timeout */
     config.timeout = 10; /* in seconds, 0->128 Timeout to reset */
     config.callback = wdtCallback;
     wdt.begin(config);
@@ -125,10 +128,12 @@ void setup() {
         Serial.println("Card failed, or not present");
         while (1) {
             // No SD card, so don't do anything more - stay stuck here
+            SD_card_status = false;
             Serial.println("Card failed, or not present");
             delay(500);
         }
     }
+    SD_card_status = true;
     Serial.println("card initialized.");
     // read a number from a file and increment it
     File dataFile = SD.open("config.txt", FILE_READ);
@@ -216,14 +221,16 @@ void setup() {
     digitalWrite(LED2_pin, HIGH);  // turn on the can bus rx led
     /*#####################################################*/
     DataLoggerActive = true;
-
+    u8x8.setI2CAddress(0x78);
     u8x8.begin();
-    u8x8.setPowerSave(0);
+    displayWelcome();
+    delay(2000);
+    u8x8.clearDisplay();
 }
 
 void loop() {
-    wdt.feed(); // Feed the whatchdog timer
-    RTC_update_by_serial(); 
+    wdt.feed();  // Feed the whatchdog timer
+    RTC_update_by_serial();
     MCU_heartbeat();  // Blink the built in led at 3.3Hz
     // CAN_hearbeat();  // Blink the can bus rx led at 3.3Hz
 
@@ -236,17 +243,24 @@ void loop() {
         receiveMarker(rxmsg, 0x202, 0);
         builDataString(rxmsg);
 
-        canrx_status = true;
+        can1rx_status = true;
         Serial.print(dataString);
     } else {
-        canrx_status = false;
+        can1rx_status = false;
         // TODO Log errors too!
     }
 
     // log the data string to the SD card if logging is active
-    if (logging_active && canrx_status) {
+    if (logging_active && can1rx_status) {
         log_to_sdcard();
         digitalToggle(LED1_pin);
+    }
+
+    // update every 1 second
+    if (millis() - previousMillis[3] > 1000) {
+        previousMillis[3] = millis();
+        // clear screen
+        displayDataLoggerStatus();
     }
 }
 
@@ -265,7 +279,7 @@ void MCU_heartbeat() {
  * @brief Blink the can bus rx led at 3.3Hz
  */
 void CAN_hearbeat() {
-    if (canrx_status) {
+    if (can1rx_status) {
         currentMillis[2] = millis();
         if (currentMillis[2] - previousMillis[2] > 300) {
             previousMillis[2] = currentMillis[2];
@@ -434,37 +448,62 @@ void sendDLstatus() {
     }
 }
 
-
-void displayWelcome (){
-    u8x8.setFont(u8x8_font_amstrad_cpc_extended_f);
-    u8x8.drawString(10, 0, "L.A.R.T");
-    u8x8.drawString(0, 1, "Data Logger");
-    u8x8.drawString(0, 2, "v1.0");
-    u8x8.drawString(0, 3, "by Perdu Ferreira");
-    u8x8.drawString(0, 4, "and David Moniz");
-    u8x8.drawString(0, 5, " ");
-    u8x8.drawString(0, 6, " ");
-    u8x8.drawString(0, 7, " ");
-}
-
-void displayDataLoggerStatus(){
+void displayWelcome() {
     u8x8.setFont(u8x8_font_amstrad_cpc_extended_f);
     u8x8.setInverseFont(1);
-    u8x8.drawString(0, 0, "# Data Logger Status #");
+    u8x8.drawString(5, 0, "L.A.R.T");
     u8x8.setInverseFont(0);
-    if (canrx_status){
-        u8x8.drawString(0, 1, "CAN1: OK");
-    } else {
-        u8x8.drawString(0, 1, "CAN1: ERROR");
+    u8x8.drawString(2, 2, "Data Logger");
+    u8x8.drawString(6, 3, "v1.1");
+    u8x8.drawString(3, 5, "By : Perdu");
+}
+
+void displayDataLoggerStatus() {
+    u8x8.setFont(u8x8_font_amstrad_cpc_extended_f);
+    u8x8.setInverseFont(1);
+    u8x8.drawString(0, 0, "## DL Status ##");
+    u8x8.setInverseFont(0);
+    static int previous_can1rx_status = -1;
+    if (previous_can1rx_status != can1rx_status) {
+        u8x8.clearLine(1);
+        if (can1rx_status) {
+            u8x8.drawString(0, 1, "CAN1: OK");
+        } else {
+            u8x8.drawString(0, 1, "CAN1: ERROR");
+        }
+        previous_can1rx_status = can1rx_status;
     }
-    u8x8.drawString(0, 2, "CAN2: ---");
-    if (logging_active){
-        u8x8.drawString(0, 3, "Logging: ON");
-    } else {
-        u8x8.drawString(0, 3, "Logging: OFF");
+
+    static int previous_can2rx_status = -1;
+    if (previous_can2rx_status != can2rx_status) {
+        u8x8.clearLine(2);
+        if (can2rx_status)
+            u8x8.drawString(0, 2, "CAN2: OK");
+        else
+            u8x8.drawString(0, 2, "CAN2: ---");
+        previous_can2rx_status = can2rx_status;
     }
-    u8x8.drawString(0, 4, " ");
-    u8x8.drawString(0, 5, " ");
-    u8x8.drawString(0, 6, " ");
-    u8x8.drawString(0, 7, " ");
+    static int previous_logging_active = -1;
+    if (previous_logging_active != logging_active) {
+        u8x8.clearLine(3);
+        if (logging_active) {
+            u8x8.drawString(0, 3, "Logging: ON");
+        } else {
+            u8x8.drawString(0, 3, "Logging: OFF");
+        }
+        previous_logging_active = logging_active;
+    }
+    static int previous_SD_card_status = -1;
+    if (previous_SD_card_status != SD_card_status) {
+        u8x8.clearLine(4);
+        if (SD_card_status) {
+            u8x8.drawString(0, 4, "SD card: OK");
+        } else {
+            u8x8.drawString(0, 4, "SD card: ERROR");
+        }
+        previous_SD_card_status = SD_card_status;
+    }
+    char time_str[15];
+    sprintf(time_str, "Time: %02d:%02d:%02d", hour(), minute(), second());
+    u8x8.drawString(0, 5, time_str);
 }
