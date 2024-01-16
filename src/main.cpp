@@ -257,7 +257,7 @@ void loop() {
     }
 
     // update every 1 second
-    if (millis() - previousMillis[3] > 1000) {
+    if (millis() - previousMillis[3] > 500) {
         previousMillis[3] = millis();
         // clear screen
         displayDataLoggerStatus();
@@ -449,7 +449,8 @@ void sendDLstatus() {
 }
 
 void displayWelcome() {
-    u8x8.setFont(u8x8_font_amstrad_cpc_extended_f);
+    //u8x8.setFont(u8x8_font_amstrad_cpc_extended_f);
+    u8x8.setFont(u8x8_font_chroma48medium8_r);
     u8x8.setInverseFont(1);
     u8x8.drawString(5, 0, "L.A.R.T");
     u8x8.setInverseFont(0);
@@ -459,7 +460,8 @@ void displayWelcome() {
 }
 
 void displayDataLoggerStatus() {
-    u8x8.setFont(u8x8_font_amstrad_cpc_extended_f);
+    //u8x8.setFont(u8x8_font_amstrad_cpc_extended_f);
+    u8x8.setFont(u8x8_font_chroma48medium8_r);
     u8x8.setInverseFont(1);
     u8x8.drawString(0, 0, "## DL Status ##");
     u8x8.setInverseFont(0);
@@ -506,4 +508,13 @@ void displayDataLoggerStatus() {
     char time_str[15];
     sprintf(time_str, "Time: %02d:%02d:%02d", hour(), minute(), second());
     u8x8.drawString(0, 5, time_str);
+    //file name
+    static int previous_file_num_int = -1;
+    if(previous_file_num_int != file_num_int){
+        u8x8.clearLine(6);
+        sprintf(file_name, "File num: %d", file_num_int);
+        u8x8.drawString(0, 6, file_name);
+        previous_file_num_int = file_num_int;
+    }
+
 }
