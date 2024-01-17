@@ -2,7 +2,6 @@
  * @file main.cpp
  * @brief This is the main file for the CAN logger project for L.A.R.T T24e
  * @author Perdu Ferreira
- * @author David Moniz
  */
 
 #include <Arduino.h>
@@ -15,10 +14,9 @@
 
 #include "Watchdog_t4.h"
 
-WDT_T4<WDT1> wdt;
-
-U8X8_SSD1306_128X64_NONAME_HW_I2C u8x8(SCL, SDA, U8X8_PIN_NONE);
-
+//________________________________________________________________________________________________
+//__________________________________Defines_________________________________________________________
+//________________________________________________________________________________________________
 #define DataLogger_CanId 0x200
 
 #define ENABLE_INTERRUPT  // uncomment to always log to sd card //fode sd cards
@@ -33,87 +31,102 @@ U8X8_SSD1306_128X64_NONAME_HW_I2C u8x8(SCL, SDA, U8X8_PIN_NONE);
 
 #ifdef __LART_DEBUG__
 #define SERIAL_OPEN_TIMEOUT 5000
+#define __Screen_ON__
+#define debug_begin(x) Serial.begin(x)
+#define debug_println(x) Serial.println(x)
+#define debug_print(x) Serial.print(x)
 #else
 #define SERIAL_OPEN_TIMEOUT 1200
 #endif
+
+#define __Telemetria_ON__  // descomentar quando for para o carro
+
 //________________________________________________________________________________________________
 //__________________________________Function prototypes___________________________________________
-void MCU_heartbeat(void);
-void CAN_hearbeat(void);
+//________________________________________________________________________________________________
+void MCU_heartbeat(void);  // Blink the built in led at 3.3Hz
+void CAN_hearbeat(void);   // Blink the can bus rx led at 3.3Hz
 
 unsigned long processSyncMessage(void);
-void RTC_update_by_serial(void);
-time_t getTeensy3Time(void);
-String milliseconds_calculation(void);
+void RTC_update_by_serial(void);        // Update the RTC by serial port if available
+time_t getTeensy3Time(void);            // Function prototype for getTeensy3Time()
+String milliseconds_calculation(void);  // Get string in the format of "HH:MM:SS:ms"
 
-String csvSuffixer(int value, int format);
-String csvSuffixer(String value);
+String csvSuffixer(int value, int format);  // Formats the string to be logged to the SD card
+String csvSuffixer(String value);           // Formats the string to be logged to the SD card
 
-void log_to_sdcard(void);
-void sendDLstatus(void);
-void receiveStart(CAN_message_t msg, uint16_t id_start, uint16_t buf_index);
-void receiveMarker(CAN_message_t msg, uint16_t id_start, uint16_t buf_index);
-void builDataString(CAN_message_t msg);
-void displayWelcome(void);
-void displayDataLoggerStatus(void);
+void log_to_sdcard(void);                                                      // Log the data string to the SD card
+void sendDLstatus(void);                                                       // Send the data logger status to the CAN bus
+void receiveStart(CAN_message_t msg, uint16_t id_start, uint16_t buf_index);   // Start/Stop the data logger by receiving a CAN frame
+void receiveMarker(CAN_message_t msg, uint16_t id_start, uint16_t buf_index);  // Receive a marker from the CAN bus
+void builDataString(CAN_message_t msg);                                        // Build the data string to be logged to the SD card
+void displayWelcome(void);                                                     // Display the welcome message on the OLED
+void displayDataLoggerStatus(void);                                            // Display the data logger status on the OLED
+void Can1_things(void);                                                        // Do the can1 receive things
+
+WDT_T4<WDT1> wdt;                                                 // Watchdog timer config
+U8X8_SSD1306_128X64_NONAME_HW_I2C u8x8(SCL, SDA, U8X8_PIN_NONE);  // OLED contructor
 //_________________________________________________________________________________________________
+//__________________________________Variables_______________________________________________________
 //_________________________________________________________________________________________________
 
-// SD card
-volatile bool logging_active = false;
-String dataString = "";
-int file_num_int = 0;  // keep track of the datalog.txt file number
-int file_num_plus_one = 0;
-File* dataFile_ptr;           // pointer to the datafile to be closed by the interrupt
-bool SD_card_status = false;  // if the SD card is present and initialized
-// Millis variables
-unsigned long currentMillis[10] = {};
-unsigned long previousMillis[10] = {};
+volatile bool logging_active = false;  // If the data logger is active or not
+String dataString = "";                // String to be logged to the SD card
+int file_num_int = 0;                  // Keep track of the datalog.txt file number
+int file_num_plus_one = 0;             // Keep track of the datalog.txt file number
+File* dataFile_ptr;                    // Pointer to the datafile to be closed by the interrupt
+bool SD_card_status = false;           // If the SD card is present and initialized
+
+// millis() variables
+unsigned long currentMillis[10] = {};   // Array to hold the current time
+unsigned long previousMillis[10] = {};  // Array to hold the previous time
 
 // RTC
-unsigned long startMillis = millis();  // start time
+unsigned long startMillis = millis();  // start time for millis() function in the beginning of the program
 
 // CAN BUS
 bool can1rx_status = false;
 bool can2rx_status = false;
 FlexCAN_T4<CAN1, RX_SIZE_256, TX_SIZE_16> can1;
-// FlexCAN_T4<CAN2, RX_SIZE_256, TX_SIZE_16> can2;
+// FlexCAN_T4<CAN2, RX_SIZE_256, TX_SIZE_16> can2; //Uncomment if using can2
 
-CAN_message_t rxmsg;  // struct to hold received CAN message
-CAN_message_t txmsg;  // struct to hold sent CAN message
+CAN_message_t rxmsg;  // Struct to hold received CAN message
+CAN_message_t txmsg;  // Struct to hold sent CAN message
 
 volatile bool DataLoggerActive = false;
+
+//______Telemetria_______
+float CAN_Bus_Data[50];
+IntervalTimer TelemetryTimer;
+void sendTelemetry(void);
 
 void wdtCallback() {
     Serial.println("FEED THE DOG SOON, OR RESET!");
 }
 
 void setup() {
-    // set the Time library to use Teensy 3.0's RTC to keep time
-    setSyncProvider(getTeensy3Time);
-
+    setSyncProvider(getTeensy3Time);  // Set the Time library to use Teensy 3.0's RTC to keep time
+#ifdef __Telemetria_ON__
+    TelemetryTimer.begin(sendTelemetry, 20000);  // interval timer for telemetry
+#endif
     /*############ MCU heartbeat ############*/
     pinMode(LED_BUILTIN, OUTPUT);     // initialize the built-in LED pin as an output
     digitalWrite(LED_BUILTIN, HIGH);  // turn on the built in led
-    /*#######################################*/
     /*################ WDT ##################*/
     WDT_timings_t config;
-    config.trigger = 5;  /* in seconds, 0->128 Warning trigger before timeout */
-    config.timeout = 10; /* in seconds, 0->128 Timeout to reset */
-    config.callback = wdtCallback;
-    wdt.begin(config);
+    config.trigger = 5;             /* in seconds, 0->128 Warning trigger before timeout */
+    config.timeout = 10;            /* in seconds, 0->128 Timeout to reset */
+    config.callback = wdtCallback;  // Callback function to be called on timeout
+    wdt.begin(config);              // Start the watchdog timer
     /*#########################################*/
-
-    unsigned long OV_millis = 0;
-    OV_millis = millis();
+    unsigned long OV_millis = 0;  // Overflow millis
+    OV_millis = millis();         // Overflow millis
     Serial.begin(115200);
     while (!Serial) {
         if (millis() - OV_millis > SERIAL_OPEN_TIMEOUT) {
             break;
         }
     }
-
-    // TODO mandar um caracter para contiuar
     //  ############################################# RTC ##############################################
     if (timeStatus() != timeSet) {
         Serial.println("Unable to sync with the RTC");
@@ -221,11 +234,15 @@ void setup() {
     digitalWrite(LED2_pin, HIGH);  // turn on the can bus rx led
     /*#####################################################*/
     DataLoggerActive = true;
+
+#ifdef __Screen_ON__
+
     u8x8.setI2CAddress(0x78);
     u8x8.begin();
     displayWelcome();
     delay(2000);
     u8x8.clearDisplay();
+#endif
 }
 
 void loop() {
@@ -234,34 +251,20 @@ void loop() {
     MCU_heartbeat();  // Blink the built in led at 3.3Hz
     // CAN_hearbeat();  // Blink the can bus rx led at 3.3Hz
 
-    sendDLstatus();  // send the data logger status to the CAN bus
+    sendDLstatus();  // Send the data logger status to the CAN bus
+    Can1_things();   // Do the can1 receive things
 
-    if (can1.read(rxmsg)) {
-        digitalToggle(LED2_pin);
-
-        receiveStart(rxmsg, 0x201, 0);
-        receiveMarker(rxmsg, 0x202, 0);
-        builDataString(rxmsg);
-
-        can1rx_status = true;
-        Serial.print(dataString);
-    } else {
-        can1rx_status = false;
-        // TODO Log errors too!
-    }
-
-    // log the data string to the SD card if logging is active
-    if (logging_active && can1rx_status) {
+    if (logging_active && can1rx_status) {  // Log the data string to the SD card if logging is active and can1rx_status is true
         log_to_sdcard();
         digitalToggle(LED1_pin);
     }
 
-    // update every 1 second
+#ifdef __Screen_ON__
     if (millis() - previousMillis[3] > 500) {
         previousMillis[3] = millis();
-        // clear screen
-        displayDataLoggerStatus();
+        displayDataLoggerStatus();  // Display the data logger status on the OLED
     }
+#endif
 }
 
 /**
@@ -449,7 +452,7 @@ void sendDLstatus() {
 }
 
 void displayWelcome() {
-    //u8x8.setFont(u8x8_font_amstrad_cpc_extended_f);
+    // u8x8.setFont(u8x8_font_amstrad_cpc_extended_f);
     u8x8.setFont(u8x8_font_chroma48medium8_r);
     u8x8.setInverseFont(1);
     u8x8.drawString(5, 0, "L.A.R.T");
@@ -460,7 +463,7 @@ void displayWelcome() {
 }
 
 void displayDataLoggerStatus() {
-    //u8x8.setFont(u8x8_font_amstrad_cpc_extended_f);
+    // u8x8.setFont(u8x8_font_amstrad_cpc_extended_f);
     u8x8.setFont(u8x8_font_chroma48medium8_r);
     u8x8.setInverseFont(1);
     u8x8.drawString(0, 0, "## DL Status ##");
@@ -508,13 +511,113 @@ void displayDataLoggerStatus() {
     char time_str[15];
     sprintf(time_str, "Time: %02d:%02d:%02d", hour(), minute(), second());
     u8x8.drawString(0, 5, time_str);
-    //file name
+    // file name
     static int previous_file_num_int = -1;
-    if(previous_file_num_int != file_num_int){
+    if (previous_file_num_int != file_num_int) {
         u8x8.clearLine(6);
+        char file_name[20] = {};
         sprintf(file_name, "File num: %d", file_num_int);
         u8x8.drawString(0, 6, file_name);
         previous_file_num_int = file_num_int;
     }
+}
+#ifdef __Telemetria_ON__
+struct CarData_MAIN {
+    uint16_t RPM = 0;            // 0-65536
+    uint8_t VSPD = 0;            // 0-160
+    uint8_t APPS1 = 0;           // 0-100
+    uint8_t BRAKE = 0;           // 0-1
+    uint8_t DBWPOS = 0;          // 0-100
+    uint8_t LAMBDA = 0;          // 0-2
+    uint8_t OILT = 0;            // 0-160
+    uint8_t OILP = 0;            // 0-12
+    uint16_t ENGT1 = 0;          // 0-1100
+    uint16_t ENGT2 = 0;          // 0-1100
+    uint8_t BATV = 0;            // 0-20
+    uint8_t IAT = 0;             // 0-167 subtrair 40 no labView
+    uint8_t MAP = 0;             // 0-4
+    uint16_t CLT = 0;            // 0-290 subtrair 40 no labView
+    uint8_t FUELP = 0;           // 0-1
+    uint8_t IGNANG = 0;          // 0-20
+    uint8_t CBUSLD = 0;          // 0-100
+    uint8_t LAMCORR = 0;         // 75-125
+    uint8_t ECUT = 0;            // 0-4
+    uint8_t DBWTRGT = 0;         // 0-100
+    uint8_t ACCX = 0;            // 0-20
+    uint8_t DataLoggerSTAT = 0;  // 0-100
+    uint8_t GearValue = 0;       // 0-1
+    uint8_t ROLL = 0;            // 75-125
+    uint8_t PITCH = 0;           // 0-4
+    uint8_t YAW = 0;             // 0-100
+    uint8_t LOGSTAT = 0;         // 0-20
+    char inicio = 10;            // END
+};
+struct CarData_MAIN carDataMain;
 
+void sendTelemetry() {
+    carDataMain.RPM = CAN_Bus_Data[1];
+    carDataMain.APPS1 = CAN_Bus_Data[2];
+    carDataMain.IAT = CAN_Bus_Data[3];
+    carDataMain.MAP = CAN_Bus_Data[4];
+    carDataMain.CLT = CAN_Bus_Data[5];
+    carDataMain.VSPD = CAN_Bus_Data[6];
+    carDataMain.OILT = CAN_Bus_Data[7];
+    carDataMain.OILP = CAN_Bus_Data[8] * 10;
+    carDataMain.FUELP = CAN_Bus_Data[9];
+    carDataMain.BATV = CAN_Bus_Data[10] * 10;
+    carDataMain.IGNANG = CAN_Bus_Data[11];
+    carDataMain.LAMBDA = CAN_Bus_Data[13] * 10;
+    carDataMain.ENGT1 = CAN_Bus_Data[15];
+    carDataMain.ENGT2 = CAN_Bus_Data[16];
+    carDataMain.CBUSLD = CAN_Bus_Data[17];
+    carDataMain.ECUT = CAN_Bus_Data[18];
+    carDataMain.DBWPOS = CAN_Bus_Data[19];
+    carDataMain.DBWTRGT = CAN_Bus_Data[20];
+
+    // carDataMain.DataLoggerSTAT = Logger_Status;
+    carDataMain.GearValue = CAN_Bus_Data[44];
+
+    carDataMain.PITCH = CAN_Bus_Data[40];
+    carDataMain.ROLL = CAN_Bus_Data[41];
+    carDataMain.YAW = CAN_Bus_Data[42];
+    /*
+    if (brakeSensor < 186) {
+        carDataMain.BRAKE = 1;
+    } else {
+        carDataMain.BRAKE = 0;
+    }
+    carDataMain.LOGSTAT = Logger_Status;
+    if (Serial1.available() > 0) {
+        if (Serial1.readString().toInt() == 30) {
+            if (D_Logger == 0) {
+                D_Logger = 255;
+            } else {
+                D_Logger = 0;
+            }
+        }
+    }
+    */
+    Serial7.write((uint8_t*)&carDataMain, sizeof carDataMain);
+}
+#endif
+void Can1_things() {
+    if (can1.read(rxmsg)) {
+        switch (rxmsg.id) {
+            case 0x201:
+                receiveStart(rxmsg, 0x201, 0);
+                break;
+            case 0x202:
+                receiveMarker(rxmsg, 0x202, 0);
+            default:
+                // add ids to filter
+                break;
+        }
+        digitalToggle(LED2_pin);   // toggle the can bus rx led
+        builDataString(rxmsg);     // build the data string to be logged to the SD card
+        can1rx_status = true;      // set the can1rx_status to true
+        Serial.print(dataString);  // print the data string to the serial port
+    } else {
+        can1rx_status = false;
+        digitalWrite(LED2_pin, LOW);  // turn off the can bus rx led
+    }
 }
