@@ -11,6 +11,7 @@
 #include <TimeLib.h>
 #include <U8g2lib.h>
 #include <Wire.h>
+#include <USBHost_t36.h>
 
 #include "Watchdog_t4.h"
 
@@ -620,4 +621,15 @@ void Can1_things() {
         can1rx_status = false;
         digitalWrite(LED2_pin, LOW);  // turn off the can bus rx led
     }
+}
+
+// write all the data in the sd card to the usb stick
+
+USBHost myusb;
+USBDrive myDrive(myusb);
+
+USBFilesystem myFiles(myusb);
+
+void write_to_usb() {
+    //TODO
 }
