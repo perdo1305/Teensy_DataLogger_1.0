@@ -10,8 +10,8 @@
 #include <SPI.h>
 #include <TimeLib.h>
 #include <U8g2lib.h>
+//#include <USBHost_t36.h>
 #include <Wire.h>
-#include <USBHost_t36.h>
 
 #include "Watchdog_t4.h"
 
@@ -40,7 +40,7 @@
 #define SERIAL_OPEN_TIMEOUT 1200
 #endif
 
-#define __Telemetria_ON__  // descomentar quando for para o carro
+//#define __Telemetria_ON__  // descomentar quando for para o carro
 
 //________________________________________________________________________________________________
 //__________________________________Function prototypes___________________________________________
@@ -82,10 +82,10 @@ bool SD_card_status = false;           // If the SD card is present and initiali
 unsigned long currentMillis[10] = {};   // Array to hold the current time
 unsigned long previousMillis[10] = {};  // Array to hold the previous time
 
-// RTC
+// ________RTC___________
 unsigned long startMillis = millis();  // start time for millis() function in the beginning of the program
 
-// CAN BUS
+// ______CAN BUS_________
 bool can1rx_status = false;
 bool can2rx_status = false;
 FlexCAN_T4<CAN1, RX_SIZE_256, TX_SIZE_16> can1;
@@ -134,7 +134,7 @@ void setup() {
     } else {
         Serial.println("RTC has set the system time");
     }
-    // ############################################# SD card #############################################
+    // ############################################# SD CARD #############################################
 
     Serial.print("Initializing SD card...");
     // see if the card is present and can be initialized:
@@ -601,6 +601,7 @@ void sendTelemetry() {
     Serial7.write((uint8_t*)&carDataMain, sizeof carDataMain);
 }
 #endif
+
 void Can1_things() {
     if (can1.read(rxmsg)) {
         switch (rxmsg.id) {
@@ -624,12 +625,12 @@ void Can1_things() {
 }
 
 // write all the data in the sd card to the usb stick
-
+/*
 USBHost myusb;
 USBDrive myDrive(myusb);
 
 USBFilesystem myFiles(myusb);
-
+*/
 void write_to_usb() {
-    //TODO
+    // TODO
 }
