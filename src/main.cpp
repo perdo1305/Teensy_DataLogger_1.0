@@ -10,7 +10,7 @@
 #include <SPI.h>
 #include <TimeLib.h>
 #include <U8g2lib.h>
-//#include <USBHost_t36.h>
+// #include <USBHost_t36.h>
 #include <Wire.h>
 
 #include "Watchdog_t4.h"
@@ -40,7 +40,7 @@
 #define SERIAL_OPEN_TIMEOUT 1200
 #endif
 
-//#define __Telemetria_ON__  // descomentar quando for para o carro
+// #define __Telemetria_ON__  // descomentar quando for para o carro
 
 //________________________________________________________________________________________________
 //__________________________________Function prototypes___________________________________________
@@ -143,6 +143,11 @@ void setup() {
         while (1) {
             // No SD card, so don't do anything more - stay stuck here
             SD_card_status = false;
+            u8x8.setI2CAddress(0x78);
+            u8x8.begin();
+            u8x8.setFont(u8x8_font_chroma48medium8_r);
+            u8x8.drawString(4, 2, "SD card");
+            u8x8.drawString(4, 3, "failed!");
             Serial.println("Card failed, or not present");
             delay(500);
         }
@@ -524,56 +529,44 @@ void displayDataLoggerStatus() {
 }
 #ifdef __Telemetria_ON__
 struct CarData_MAIN {
-    uint16_t RPM = 0;            // 0-65536
-    uint8_t VSPD = 0;            // 0-160
-    uint8_t APPS1 = 0;           // 0-100
-    uint8_t BRAKE = 0;           // 0-1
-    uint8_t DBWPOS = 0;          // 0-100
-    uint8_t LAMBDA = 0;          // 0-2
-    uint8_t OILT = 0;            // 0-160
-    uint8_t OILP = 0;            // 0-12
-    uint16_t ENGT1 = 0;          // 0-1100
-    uint16_t ENGT2 = 0;          // 0-1100
-    uint8_t BATV = 0;            // 0-20
-    uint8_t IAT = 0;             // 0-167 subtrair 40 no labView
-    uint8_t MAP = 0;             // 0-4
-    uint16_t CLT = 0;            // 0-290 subtrair 40 no labView
-    uint8_t FUELP = 0;           // 0-1
-    uint8_t IGNANG = 0;          // 0-20
-    uint8_t CBUSLD = 0;          // 0-100
-    uint8_t LAMCORR = 0;         // 75-125
-    uint8_t ECUT = 0;            // 0-4
-    uint8_t DBWTRGT = 0;         // 0-100
-    uint8_t ACCX = 0;            // 0-20
-    uint8_t DataLoggerSTAT = 0;  // 0-100
-    uint8_t GearValue = 0;       // 0-1
-    uint8_t ROLL = 0;            // 75-125
-    uint8_t PITCH = 0;           // 0-4
-    uint8_t YAW = 0;             // 0-100
-    uint8_t LOGSTAT = 0;         // 0-20
-    char inicio = 10;            // END
+    bool DataLogger_STAT = 0;      // 0-1
+    bool VCU_STAT = 0;             // 0-1
+    bool TCU_STAT = 0;             // 0-1
+    bool BMS_STAT = 0;             // 0-1
+    bool INVERTER_STAT = 0;        // 0-1
+    bool PDM_STAT = 0;             // 0-1
+    bool STEERING_WHEEL_STAT = 0;  // 0-1
+    bool IMU_STAT = 0;             // 0-1
+    bool DYNAMICS_FRONT_STAT = 0;  // 0-1
+    bool DYNAMICS_BACK_STAT = 0;   // 0-1
+    bool ACU_STAT = 0;             // 0-1
+    bool ALC_STAT = 0;             // 0-1
+    bool AMS_STAT = 0;             // 0-1
+    bool STEERING_ANGLE_STAT = 0;  // 0-1
+
+    
 };
-struct CarData_MAIN carDataMain;
+struct CarData_MAIN T24_E;
 
 void sendTelemetry() {
-    carDataMain.RPM = CAN_Bus_Data[1];
-    carDataMain.APPS1 = CAN_Bus_Data[2];
-    carDataMain.IAT = CAN_Bus_Data[3];
-    carDataMain.MAP = CAN_Bus_Data[4];
-    carDataMain.CLT = CAN_Bus_Data[5];
-    carDataMain.VSPD = CAN_Bus_Data[6];
-    carDataMain.OILT = CAN_Bus_Data[7];
-    carDataMain.OILP = CAN_Bus_Data[8] * 10;
-    carDataMain.FUELP = CAN_Bus_Data[9];
-    carDataMain.BATV = CAN_Bus_Data[10] * 10;
-    carDataMain.IGNANG = CAN_Bus_Data[11];
-    carDataMain.LAMBDA = CAN_Bus_Data[13] * 10;
-    carDataMain.ENGT1 = CAN_Bus_Data[15];
-    carDataMain.ENGT2 = CAN_Bus_Data[16];
-    carDataMain.CBUSLD = CAN_Bus_Data[17];
-    carDataMain.ECUT = CAN_Bus_Data[18];
-    carDataMain.DBWPOS = CAN_Bus_Data[19];
-    carDataMain.DBWTRGT = CAN_Bus_Data[20];
+    T24_E.RPM = CAN_Bus_Data[1];
+    T24_E.APPS1 = CAN_Bus_Data[2];
+    T24_E.IAT = CAN_Bus_Data[3];
+    T24_E.MAP = CAN_Bus_Data[4];
+    T24_E.CLT = CAN_Bus_Data[5];
+    T24_E.VSPD = CAN_Bus_Data[6];
+    T24_E.OILT = CAN_Bus_Data[7];
+    T24_E.OILP = CAN_Bus_Data[8] * 10;
+    T24_E.FUELP = CAN_Bus_Data[9];
+    T24_E.BATV = CAN_Bus_Data[10] * 10;
+    T24_E.IGNANG = CAN_Bus_Data[11];
+    T24_E.LAMBDA = CAN_Bus_Data[13] * 10;
+    T24_E.ENGT1 = CAN_Bus_Data[15];
+    T24_E.ENGT2 = CAN_Bus_Data[16];
+    T24_E.CBUSLD = CAN_Bus_Data[17];
+    T24_E.ECUT = CAN_Bus_Data[18];
+    T24_E.DBWPOS = CAN_Bus_Data[19];
+    T24_E.DBWTRGT = CAN_Bus_Data[20];
 
     // carDataMain.DataLoggerSTAT = Logger_Status;
     carDataMain.GearValue = CAN_Bus_Data[44];
@@ -604,6 +597,7 @@ void sendTelemetry() {
 
 void Can1_things() {
     if (can1.read(rxmsg)) {
+        /*
         switch (rxmsg.id) {
             case 0x201:
                 receiveStart(rxmsg, 0x201, 0);
@@ -614,6 +608,7 @@ void Can1_things() {
                 // add ids to filter
                 break;
         }
+        */
         digitalToggle(LED2_pin);   // toggle the can bus rx led
         builDataString(rxmsg);     // build the data string to be logged to the SD card
         can1rx_status = true;      // set the can1rx_status to true
