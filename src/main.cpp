@@ -6,14 +6,28 @@
 
 #include <Arduino.h>
 #include <FlexCAN_T4.h>
+#include <HardwareSerial.h>
 #include <SD.h>
 #include <SPI.h>
 #include <TimeLib.h>
 #include <U8g2lib.h>
 // #include <USBHost_t36.h>
+#include <SoftwareSerial.h>
 #include <Wire.h>
 
+#include "CANSART_STR/src/cansart.h"
 #include "Watchdog_t4.h"
+
+frame60 frames60;
+frame120 frames120;
+frame61 frames61;
+frame80 frames80;
+HardwareSerial& serialPort = Serial1;
+
+// #define rx7Pin 28
+// #define tx7Pin 29
+
+// SoftwareSerial MySerial7(rx7Pin, tx7Pin);  // RX, TX
 
 //________________________________________________________________________________________________
 //__________________________________Defines_________________________________________________________
@@ -40,7 +54,7 @@
 #define SERIAL_OPEN_TIMEOUT 1200
 #endif
 
-#define __Telemetria_ON__  // descomentar quando for para o carro
+// #define __Telemetria_ON__  // descomentar quando for para o carro
 
 //________________________________________________________________________________________________
 //__________________________________Function prototypes___________________________________________
@@ -68,7 +82,7 @@ void Can1_things(void);                                                        /
 WDT_T4<WDT1> wdt;                                                 // Watchdog timer config
 U8X8_SSD1306_128X64_NONAME_HW_I2C u8x8(SCL, SDA, U8X8_PIN_NONE);  // OLED contructor
 //_________________________________________________________________________________________________
-//__________________________________Variables_______________________________________________________
+//__________________________________Variables______________________________________________________
 //_________________________________________________________________________________________________
 
 volatile bool logging_active = false;  // If the data logger is active or not
@@ -110,24 +124,38 @@ void setup() {
 #ifdef __Telemetria_ON__
     TelemetryTimer.begin(sendTelemetry, 20000);  // interval timer for telemetry
 #endif
-    /*############ MCU heartbeat ############*/
+    /*############ MCU heartbeat #######################################################################*/
     pinMode(LED_BUILTIN, OUTPUT);     // initialize the built-in LED pin as an output
     digitalWrite(LED_BUILTIN, HIGH);  // turn on the built in led
-    /*################ WDT ##################*/
+    /*################ WDT #############################################################################*/
     WDT_timings_t config;
     config.trigger = 5;             /* in seconds, 0->128 Warning trigger before timeout */
     config.timeout = 10;            /* in seconds, 0->128 Timeout to reset */
     config.callback = wdtCallback;  // Callback function to be called on timeout
     wdt.begin(config);              // Start the watchdog timer
-    /*#########################################*/
+
+    /*##################################################################################################*/
+
     unsigned long OV_millis = 0;  // Overflow millis
     OV_millis = millis();         // Overflow millis
-    Serial.begin(115200);
+    // Serial.begin(115200);
     while (!Serial) {
         if (millis() - OV_millis > SERIAL_OPEN_TIMEOUT) {
             break;
         }
     }
+
+    // Hardware
+
+    setCANSART_Driver(serialPort, (unsigned long)4800);
+    // Serial7.setRX(28);
+    // Serial7.begin(9600);  // Telemetria
+
+    // SoftwareSerial
+    // pinMode(rx7Pin, INPUT);
+    // pinMode(tx7Pin, OUTPUT);
+    // MySerial7.begin(9600);
+
     //  ############################################# RTC ##############################################
     if (timeStatus() != timeSet) {
         Serial.println("Unable to sync with the RTC");
@@ -252,17 +280,30 @@ void setup() {
 }
 
 void loop() {
+    // Serial1.println("Hello World");
+    if(Serial1.available()){
+        Serial.println(Serial1.readString());
+    }
+    updateDB(&frames60);
+    updateDB(&frames61);
+    updateDB(&frames80);
+    updateDB(&frames120);
     wdt.feed();  // Feed the whatchdog timer
     RTC_update_by_serial();
     MCU_heartbeat();  // Blink the built in led at 3.3Hz
     // CAN_hearbeat();  // Blink the can bus rx led at 3.3Hz
 
-    sendDLstatus();  // Send the data logger status to the CAN bus
-    Can1_things();   // Do the can1 receive things
+    // sendDLstatus();  // Send the data logger status to the CAN bus
+    Can1_things();  // Do the can1 receive things
 
-    if (logging_active && can1rx_status) {  // Log the data string to the SD card if logging is active and can1rx_status is true
-        log_to_sdcard();
-        digitalToggle(LED1_pin);
+    // delay 2ms
+    if (millis() - previousMillis[4] > 2) {
+        previousMillis[4] = millis();
+        if (logging_active && can1rx_status) {  // Log the data string to the SD card if logging is active and can1rx_status is true
+                                                // if (logging_active) {
+            log_to_sdcard();
+            digitalToggle(LED1_pin);
+        }
     }
 
 #ifdef __Screen_ON__
@@ -562,30 +603,66 @@ struct CarData_MAIN {            // 32 Bytes
 struct CarData_MAIN carDataMain;
 
 void sendTelemetry() {
-    carDataMain.DataLoggerSTAT = logging_active;
-    Serial7.write((uint8_t*)&carDataMain, sizeof carDataMain);
 }
+
 #endif
-//TODO Stearing angle
+
+// TODO Stearing angle
 void Can1_things() {
     if (can1.read(rxmsg)) {
         switch (rxmsg.id) {
             case 0x60:
-                carDataMain.RPM = rxmsg.buf[0] << 8 | rxmsg.buf[1];
-                carDataMain.OILP = rxmsg.buf[2] << 8 | rxmsg.buf[3];
-                carDataMain.OILT = rxmsg.buf[4] << 8 | rxmsg.buf[5];
-                carDataMain.BATV = rxmsg.buf[6] << 8 | rxmsg.buf[7];
+                frames60.DATA1 = rxmsg.buf[0];
+                frames60.DATA2 = rxmsg.buf[1];
+                frames60.DATA3 = rxmsg.buf[2];
+                frames60.DATA4 = rxmsg.buf[3];
+                frames60.DATA5 = rxmsg.buf[4];
+                frames60.DATA6 = rxmsg.buf[5];
+                frames60.DATA7 = rxmsg.buf[6];
+                frames60.DATA8 = rxmsg.buf[7];
+                /*
+                    carDataMain.RPM = rxmsg.buf[0] << 8 | rxmsg.buf[1];
+                    carDataMain.OILP = rxmsg.buf[2] << 8 | rxmsg.buf[3];
+                    carDataMain.OILT = rxmsg.buf[4] << 8 | rxmsg.buf[5];
+                    carDataMain.BATV = rxmsg.buf[6] << 8 | rxmsg.buf[7];
+                    */
                 break;
             case 0x61:
-                carDataMain.VSPD = rxmsg.buf[0] << 8 | rxmsg.buf[1];
+                // carDataMain.VSPD = rxmsg.buf[0] << 8 | rxmsg.buf[1];
+
+                frames61.DATA1 = rxmsg.buf[0];
+                frames61.DATA2 = rxmsg.buf[1];
+                frames61.DATA3 = rxmsg.buf[2];
+                frames61.DATA4 = rxmsg.buf[3];
+                frames61.DATA5 = rxmsg.buf[4];
+                frames61.DATA6 = rxmsg.buf[5];
+                frames61.DATA7 = rxmsg.buf[6];
+                frames61.DATA8 = rxmsg.buf[7];
+
                 break;
             case 0x62:
                 break;
-            case 0x64:
-                carDataMain.GearValue = rxmsg.buf[0] << 8 | rxmsg.buf[1];
+            case 0x80:
+                frames80.DATA1 = rxmsg.buf[0];
+                frames80.DATA2 = rxmsg.buf[1];
+                frames80.DATA3 = rxmsg.buf[2];
+                frames80.DATA4 = rxmsg.buf[3];
+                frames80.DATA5 = rxmsg.buf[4];
+                frames80.DATA6 = rxmsg.buf[5];
+                frames80.DATA7 = rxmsg.buf[6];
+                frames80.DATA8 = rxmsg.buf[7];
+
                 break;
-            case 0x201:
-                // receiveStart(rxmsg, 0x201, 0);
+            case 0x200:
+                frames120.DATA1 = rxmsg.buf[0];
+                frames120.DATA2 = rxmsg.buf[1];
+                frames120.DATA3 = rxmsg.buf[2];
+                frames120.DATA4 = rxmsg.buf[3];
+                frames120.DATA5 = rxmsg.buf[4];
+                frames120.DATA6 = rxmsg.buf[5];
+                frames120.DATA7 = rxmsg.buf[6];
+                frames120.DATA8 = rxmsg.buf[7];
+
                 break;
             case 0x202:
                 // receiveMarker(rxmsg, 0x202, 0);
@@ -597,7 +674,7 @@ void Can1_things() {
         digitalToggle(LED2_pin);   // toggle the can bus rx led
         builDataString(rxmsg);     // build the data string to be logged to the SD card
         can1rx_status = true;      // set the can1rx_status to true
-        Serial.print(dataString);  // print the data string to the serial port
+        //Serial.print(dataString);  // print the data string to the serial port
     } else {
         can1rx_status = false;
         digitalWrite(LED2_pin, LOW);  // turn off the can bus rx led
