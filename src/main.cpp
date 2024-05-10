@@ -318,6 +318,7 @@ void loop() {
 
     sendDLstatus();  // Send the data logger status to the CAN bus
     Can1_things();   // Do the can1 receive things
+<<<<<<< Updated upstream
     // Can2_things();   // Do the can2 receive things
 
     // delay 2ms
@@ -325,6 +326,12 @@ void loop() {
         previousMillis[4] = millis();
         if (logging_active && can1rx_status) {  // Log the data string to the SD card if logging is active and can1rx_status is true
                                                 // if (logging_active) {
+=======
+
+    if (millis() - previousMillis[4] > 10) {
+        previousMillis[4] = millis();
+        if (logging_active && can1rx_status) {  // Log the data string to the SD card if logging is active and can1rx_status is true
+>>>>>>> Stashed changes
             log_to_sdcard();
             digitalToggle(LED1_pin);
         }
