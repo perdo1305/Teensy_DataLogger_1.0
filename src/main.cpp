@@ -98,13 +98,14 @@ U8X8_SSD1306_128X64_NONAME_HW_I2C u8x8(SCL, SDA, U8X8_PIN_NONE);  // OLED contru
 //_________________________________________________________________________________________________
 
 volatile bool logging_active = false;  // If the data logger is active or not
-String dataString = "";                // String to be logged to the SD card
-int file_num_int = 0;                  // Keep track of the datalog.txt file number
-int file_num_plus_one = 0;             // Keep track of the datalog.txt file number
-File* dataFile_ptr;                    // Pointer to the datafile to be closed by the interrupt
-bool SD_card_status = false;           // If the SD card is present and initialized
+volatile bool DataLoggerActive = false;
+String dataString = "";       // String to be logged to the SD card
+int file_num_int = 0;         // Keep track of the datalog.txt file number
+int file_num_plus_one = 0;    // Keep track of the datalog.txt file number
+File* dataFile_ptr;           // Pointer to the datafile to be closed by the interrupt
+bool SD_card_status = false;  // If the SD card is present and initialized
 
-// millis() variables
+// ________Millis()________
 unsigned long currentMillis[10] = {};   // Array to hold the current time
 unsigned long previousMillis[10] = {};  // Array to hold the previous time
 
@@ -115,6 +116,7 @@ unsigned long startMillis = millis();  // start time for millis() function in th
 bool can1rx_status = false;
 bool can2rx_status = false;
 bool can3rx_status = false;
+
 FlexCAN_T4<CAN1, RX_SIZE_256, TX_SIZE_16> can1;
 FlexCAN_T4<CAN2, RX_SIZE_256, TX_SIZE_16> can2;
 FlexCAN_T4<CAN3, RX_SIZE_256, TX_SIZE_16> can3;
@@ -122,7 +124,11 @@ FlexCAN_T4<CAN3, RX_SIZE_256, TX_SIZE_16> can3;
 CAN_message_t rxmsg;  // Struct to hold received CAN message
 CAN_message_t txmsg;  // Struct to hold sent CAN message
 
-volatile bool DataLoggerActive = false;
+CAN_message_t rxmsg2;  // Struct to hold received CAN message
+CAN_message_t txmsg2;  // Struct to hold sent CAN message
+
+CAN_message_t rxmsg3;  // Struct to hold received CAN message
+CAN_message_t txmsg3;  // Struct to hold sent CAN message
 
 //______Telemetria_______
 float CAN_Bus_Data[50];
@@ -175,7 +181,7 @@ void setup() {
 
     Serial.print("Initializing SD card...");
     // see if the card is present and can be initialized:
-    if (!SD.begin(chipSelect)) {
+    if (!SD.begin(BUILTIN_SDCARD)) {
         Serial.println("Card failed, or not present");
         while (1) {
             // No SD card, so don't do anything more - stay stuck here
@@ -189,6 +195,7 @@ void setup() {
             delay(500);
         }
     }
+    
     SD_card_status = true;
     Serial.println("card initialized.");
     // read a number from a file and increment it
@@ -272,14 +279,6 @@ void setup() {
     can3.begin();
     can3.setBaudRate(1000000);
     /*##############################################*/
-
-    /*#################### Heartbeat LEDS #################*/
-    pinMode(LED1_pin, OUTPUT);  // logging active led
-    pinMode(LED2_pin, OUTPUT);  // can bus rx led
-    //-----------------------------------------------------
-    digitalWrite(LED1_pin, HIGH);  // turn on the logging active led
-    digitalWrite(LED2_pin, HIGH);  // turn on the can bus rx led
-    /*#####################################################*/
     DataLoggerActive = true;
 
     StartUpSequence();
@@ -707,9 +706,9 @@ void Can1_things() {
             }
 
             digitalToggle(LED_GPIO34);  // toggle the can bus rx led
-            builDataString(rxmsg);    // build the data string to be logged to the SD card
-            can1rx_status = true;     // set the can1rx_status to true
-            Serial.print(rxmsg.id);   // print the data string to the serial port
+            builDataString(rxmsg);      // build the data string to be logged to the SD card
+            can1rx_status = true;       // set the can1rx_status to true
+            Serial.print(rxmsg.id);     // print the data string to the serial port
         }
     }
 }
@@ -720,11 +719,11 @@ void Can2_things() {
         can2rx_status = false;
         digitalWrite(LED_GPIO35, LOW);  // turn off the can bus rx led
     } else {
-        if (can2.read(rxmsg)) {
+        if (can2.read(rxmsg2)) {
             digitalToggle(LED_GPIO35);  // toggle the can bus rx led
-            builDataString(rxmsg);    // build the data string to be logged to the SD card
+            // builDataString(rxmsg2);    // build the data string to be logged to the SD card
             can2rx_status = true;     // set the can1rx_status to true
-            Serial.print(rxmsg.id);   // print the data string to the serial port
+            Serial.print(rxmsg2.id);  // print the data string to the serial port
         }
     }
 }
@@ -735,11 +734,11 @@ void Can3_things() {
         can3rx_status = false;
         digitalWrite(LED_GPIO36, LOW);  // turn off the can bus rx led
     } else {
-        if (can3.read(rxmsg)) {
+        if (can3.read(rxmsg3)) {
             digitalToggle(LED_GPIO36);  // toggle the can bus rx led
-            builDataString(rxmsg);    // build the data string to be logged to the SD card
+            // builDataString(rxmsg3);    // build the data string to be logged to the SD card
             can3rx_status = true;     // set the can1rx_status to true
-            Serial.print(rxmsg.id);   // print the data string to the serial port
+            Serial.print(rxmsg3.id);  // print the data string to the serial port
         }
     }
 }
@@ -758,6 +757,7 @@ void StartUpSequence() {
     delay(80);
     digitalWrite(LED_GPIO36, HIGH);
     delay(80);
+
     digitalWrite(LED_GPIO33, LOW);
     delay(80);
     digitalWrite(LED_GPIO34, LOW);
@@ -766,6 +766,7 @@ void StartUpSequence() {
     delay(80);
     digitalWrite(LED_GPIO36, LOW);
     delay(80);
+
     digitalWrite(LED_GPIO33, HIGH);
     delay(80);
     digitalWrite(LED_GPIO34, HIGH);
@@ -774,6 +775,7 @@ void StartUpSequence() {
     delay(80);
     digitalWrite(LED_GPIO36, HIGH);
     delay(80);
+
     digitalWrite(LED_GPIO33, LOW);
     delay(80);
     digitalWrite(LED_GPIO34, LOW);
