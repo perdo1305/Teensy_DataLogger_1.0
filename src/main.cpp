@@ -18,11 +18,15 @@
 #include "CANSART_STR/src/cansart.h"
 #include "Watchdog_t4.h"
 
+#define CANSART 0
+
+#if CANSART
 frame60 frames60;
 frame120 frames120;
 frame61 frames61;
 frame80 frames80;
 HardwareSerial& serialPort = Serial1;
+#endif
 
 // #define rx7Pin 28
 // #define tx7Pin 29
@@ -54,6 +58,11 @@ HardwareSerial& serialPort = Serial1;
 #define SERIAL_OPEN_TIMEOUT 1200
 #endif
 
+#define LED_GPIO33 33
+#define LED_GPIO34 34
+#define LED_GPIO35 35
+#define LED_GPIO36 36
+
 // #define __Telemetria_ON__  // descomentar quando for para o carro
 
 //________________________________________________________________________________________________
@@ -78,6 +87,9 @@ void builDataString(CAN_message_t msg);                                        /
 void displayWelcome(void);                                                     // Display the welcome message on the OLED
 void displayDataLoggerStatus(void);                                            // Display the data logger status on the OLED
 void Can1_things(void);                                                        // Do the can1 receive things
+void Can2_things(void);                                                        // Do the can2 receive things
+void Can3_things(void);                                                        // Do the can3 receive things
+void StartUpSequence(void);                                                    // LEDs startup sequence
 
 WDT_T4<WDT1> wdt;                                                 // Watchdog timer config
 U8X8_SSD1306_128X64_NONAME_HW_I2C u8x8(SCL, SDA, U8X8_PIN_NONE);  // OLED contructor
@@ -102,8 +114,10 @@ unsigned long startMillis = millis();  // start time for millis() function in th
 // ______CAN BUS_________
 bool can1rx_status = false;
 bool can2rx_status = false;
+bool can3rx_status = false;
 FlexCAN_T4<CAN1, RX_SIZE_256, TX_SIZE_16> can1;
-// FlexCAN_T4<CAN2, RX_SIZE_256, TX_SIZE_16> can2; //Uncomment if using can2
+FlexCAN_T4<CAN2, RX_SIZE_256, TX_SIZE_16> can2;
+FlexCAN_T4<CAN3, RX_SIZE_256, TX_SIZE_16> can3;
 
 CAN_message_t rxmsg;  // Struct to hold received CAN message
 CAN_message_t txmsg;  // Struct to hold sent CAN message
@@ -127,12 +141,6 @@ void setup() {
     /*############ MCU heartbeat #######################################################################*/
     pinMode(LED_BUILTIN, OUTPUT);     // initialize the built-in LED pin as an output
     digitalWrite(LED_BUILTIN, HIGH);  // turn on the built in led
-    /*################ WDT #############################################################################*/
-    WDT_timings_t config;
-    config.trigger = 5;             /* in seconds, 0->128 Warning trigger before timeout */
-    config.timeout = 10;            /* in seconds, 0->128 Timeout to reset */
-    config.callback = wdtCallback;  // Callback function to be called on timeout
-    wdt.begin(config);              // Start the watchdog timer
 
     /*##################################################################################################*/
 
@@ -146,8 +154,9 @@ void setup() {
     }
 
     // Hardware
-
+#if CANSART
     setCANSART_Driver(serialPort, (unsigned long)4800);
+#endif
     // Serial7.setRX(28);
     // Serial7.begin(9600);  // Telemetria
 
@@ -258,6 +267,10 @@ void setup() {
     /*#################### CAN #####################*/
     can1.begin();
     can1.setBaudRate(1000000);
+    can2.begin();
+    can2.setBaudRate(1000000);
+    can3.begin();
+    can3.setBaudRate(1000000);
     /*##############################################*/
 
     /*#################### Heartbeat LEDS #################*/
@@ -269,6 +282,8 @@ void setup() {
     /*#####################################################*/
     DataLoggerActive = true;
 
+    StartUpSequence();
+
 #ifdef __Screen_ON__
 
     u8x8.setI2CAddress(0x78);
@@ -277,24 +292,34 @@ void setup() {
     delay(2000);
     u8x8.clearDisplay();
 #endif
+    /*################ WDT #############################################################################*/
+    WDT_timings_t config;
+    config.trigger = 5;             /* in seconds, 0->128 Warning trigger before timeout */
+    config.timeout = 10;            /* in seconds, 0->128 Timeout to reset */
+    config.callback = wdtCallback;  // Callback function to be called on timeout
+    wdt.begin(config);              // Start the watchdog timer
 }
 
 void loop() {
     // Serial1.println("Hello World");
-    if(Serial1.available()){
+    if (Serial1.available()) {
         Serial.println(Serial1.readString());
     }
+#if CANSART
     updateDB(&frames60);
     updateDB(&frames61);
     updateDB(&frames80);
     updateDB(&frames120);
+#endif
+
     wdt.feed();  // Feed the whatchdog timer
     RTC_update_by_serial();
     MCU_heartbeat();  // Blink the built in led at 3.3Hz
     // CAN_hearbeat();  // Blink the can bus rx led at 3.3Hz
 
-    // sendDLstatus();  // Send the data logger status to the CAN bus
-    Can1_things();  // Do the can1 receive things
+    sendDLstatus();  // Send the data logger status to the CAN bus
+    Can1_things();   // Do the can1 receive things
+    // Can2_things();   // Do the can2 receive things
 
     // delay 2ms
     if (millis() - previousMillis[4] > 2) {
@@ -609,74 +634,151 @@ void sendTelemetry() {
 
 // TODO Stearing angle
 void Can1_things() {
-    if (can1.read(rxmsg)) {
-        switch (rxmsg.id) {
-            case 0x60:
-                frames60.DATA1 = rxmsg.buf[0];
-                frames60.DATA2 = rxmsg.buf[1];
-                frames60.DATA3 = rxmsg.buf[2];
-                frames60.DATA4 = rxmsg.buf[3];
-                frames60.DATA5 = rxmsg.buf[4];
-                frames60.DATA6 = rxmsg.buf[5];
-                frames60.DATA7 = rxmsg.buf[6];
-                frames60.DATA8 = rxmsg.buf[7];
-                /*
-                    carDataMain.RPM = rxmsg.buf[0] << 8 | rxmsg.buf[1];
-                    carDataMain.OILP = rxmsg.buf[2] << 8 | rxmsg.buf[3];
-                    carDataMain.OILT = rxmsg.buf[4] << 8 | rxmsg.buf[5];
-                    carDataMain.BATV = rxmsg.buf[6] << 8 | rxmsg.buf[7];
-                    */
-                break;
-            case 0x61:
-                // carDataMain.VSPD = rxmsg.buf[0] << 8 | rxmsg.buf[1];
-
-                frames61.DATA1 = rxmsg.buf[0];
-                frames61.DATA2 = rxmsg.buf[1];
-                frames61.DATA3 = rxmsg.buf[2];
-                frames61.DATA4 = rxmsg.buf[3];
-                frames61.DATA5 = rxmsg.buf[4];
-                frames61.DATA6 = rxmsg.buf[5];
-                frames61.DATA7 = rxmsg.buf[6];
-                frames61.DATA8 = rxmsg.buf[7];
-
-                break;
-            case 0x62:
-                break;
-            case 0x80:
-                frames80.DATA1 = rxmsg.buf[0];
-                frames80.DATA2 = rxmsg.buf[1];
-                frames80.DATA3 = rxmsg.buf[2];
-                frames80.DATA4 = rxmsg.buf[3];
-                frames80.DATA5 = rxmsg.buf[4];
-                frames80.DATA6 = rxmsg.buf[5];
-                frames80.DATA7 = rxmsg.buf[6];
-                frames80.DATA8 = rxmsg.buf[7];
-
-                break;
-            case 0x200:
-                frames120.DATA1 = rxmsg.buf[0];
-                frames120.DATA2 = rxmsg.buf[1];
-                frames120.DATA3 = rxmsg.buf[2];
-                frames120.DATA4 = rxmsg.buf[3];
-                frames120.DATA5 = rxmsg.buf[4];
-                frames120.DATA6 = rxmsg.buf[5];
-                frames120.DATA7 = rxmsg.buf[6];
-                frames120.DATA8 = rxmsg.buf[7];
-
-                break;
-            case 0x202:
-                // receiveMarker(rxmsg, 0x202, 0);
-            default:
-                // add ids to filter
-                break;
-        }
-
-        digitalToggle(LED2_pin);   // toggle the can bus rx led
-        builDataString(rxmsg);     // build the data string to be logged to the SD card
-        can1rx_status = true;      // set the can1rx_status to true
-        //Serial.print(dataString);  // print the data string to the serial port
-    } else {
+    CAN_error_t error;
+    if (can1.error(error, 0)) {
+        Serial.println("CAN1 ERROR");
         can1rx_status = false;
-        digitalWrite(LED2_pin, LOW);  // turn off the can bus rx led
+        digitalWrite(LED_GPIO34, LOW);  // turn off the can bus rx led
+    } else {
+        if (can1.read(rxmsg)) {
+            switch (rxmsg.id) {
+                case 0x60:
+#if CANSART
+                    frames60.DATA1 = rxmsg.buf[0];
+                    frames60.DATA2 = rxmsg.buf[1];
+                    frames60.DATA3 = rxmsg.buf[2];
+                    frames60.DATA4 = rxmsg.buf[3];
+                    frames60.DATA5 = rxmsg.buf[4];
+                    frames60.DATA6 = rxmsg.buf[5];
+                    frames60.DATA7 = rxmsg.buf[6];
+                    frames60.DATA8 = rxmsg.buf[7];
+#endif
+                    /*
+                        carDataMain.RPM = rxmsg.buf[0] << 8 | rxmsg.buf[1];
+                        carDataMain.OILP = rxmsg.buf[2] << 8 | rxmsg.buf[3];
+                        carDataMain.OILT = rxmsg.buf[4] << 8 | rxmsg.buf[5];
+                        carDataMain.BATV = rxmsg.buf[6] << 8 | rxmsg.buf[7];
+                        */
+                    break;
+                case 0x61:
+                    // carDataMain.VSPD = rxmsg.buf[0] << 8 | rxmsg.buf[1];
+#if CANSART
+                    frames61.DATA1 = rxmsg.buf[0];
+                    frames61.DATA2 = rxmsg.buf[1];
+                    frames61.DATA3 = rxmsg.buf[2];
+                    frames61.DATA4 = rxmsg.buf[3];
+                    frames61.DATA5 = rxmsg.buf[4];
+                    frames61.DATA6 = rxmsg.buf[5];
+                    frames61.DATA7 = rxmsg.buf[6];
+                    frames61.DATA8 = rxmsg.buf[7];
+#endif
+                    break;
+                case 0x62:
+                    break;
+                case 0x80:
+#if CANSART
+                    frames80.DATA1 = rxmsg.buf[0];
+                    frames80.DATA2 = rxmsg.buf[1];
+                    frames80.DATA3 = rxmsg.buf[2];
+                    frames80.DATA4 = rxmsg.buf[3];
+                    frames80.DATA5 = rxmsg.buf[4];
+                    frames80.DATA6 = rxmsg.buf[5];
+                    frames80.DATA7 = rxmsg.buf[6];
+                    frames80.DATA8 = rxmsg.buf[7];
+#endif
+                    break;
+                case 0x200:
+#if CANSART
+                    frames120.DATA1 = rxmsg.buf[0];
+                    frames120.DATA2 = rxmsg.buf[1];
+                    frames120.DATA3 = rxmsg.buf[2];
+                    frames120.DATA4 = rxmsg.buf[3];
+                    frames120.DATA5 = rxmsg.buf[4];
+                    frames120.DATA6 = rxmsg.buf[5];
+                    frames120.DATA7 = rxmsg.buf[6];
+                    frames120.DATA8 = rxmsg.buf[7];
+#endif
+                    break;
+                case 0x202:
+                    // receiveMarker(rxmsg, 0x202, 0);
+                default:
+                    // add ids to filter
+                    break;
+            }
+
+            digitalToggle(LED_GPIO34);  // toggle the can bus rx led
+            builDataString(rxmsg);    // build the data string to be logged to the SD card
+            can1rx_status = true;     // set the can1rx_status to true
+            Serial.print(rxmsg.id);   // print the data string to the serial port
+        }
     }
+}
+
+void Can2_things() {
+    CAN_error_t error;
+    if (can2.error(error, 0)) {
+        can2rx_status = false;
+        digitalWrite(LED_GPIO35, LOW);  // turn off the can bus rx led
+    } else {
+        if (can2.read(rxmsg)) {
+            digitalToggle(LED_GPIO35);  // toggle the can bus rx led
+            builDataString(rxmsg);    // build the data string to be logged to the SD card
+            can2rx_status = true;     // set the can1rx_status to true
+            Serial.print(rxmsg.id);   // print the data string to the serial port
+        }
+    }
+}
+
+void Can3_things() {
+    CAN_error_t error;
+    if (can3.error(error, 0)) {
+        can3rx_status = false;
+        digitalWrite(LED_GPIO36, LOW);  // turn off the can bus rx led
+    } else {
+        if (can3.read(rxmsg)) {
+            digitalToggle(LED_GPIO36);  // toggle the can bus rx led
+            builDataString(rxmsg);    // build the data string to be logged to the SD card
+            can3rx_status = true;     // set the can1rx_status to true
+            Serial.print(rxmsg.id);   // print the data string to the serial port
+        }
+    }
+}
+
+void StartUpSequence() {
+    pinMode(LED_GPIO33, OUTPUT);
+    pinMode(LED_GPIO34, OUTPUT);
+    pinMode(LED_GPIO35, OUTPUT);
+    pinMode(LED_GPIO36, OUTPUT);
+
+    digitalWrite(LED_GPIO33, HIGH);
+    delay(80);
+    digitalWrite(LED_GPIO34, HIGH);
+    delay(80);
+    digitalWrite(LED_GPIO35, HIGH);
+    delay(80);
+    digitalWrite(LED_GPIO36, HIGH);
+    delay(80);
+    digitalWrite(LED_GPIO33, LOW);
+    delay(80);
+    digitalWrite(LED_GPIO34, LOW);
+    delay(80);
+    digitalWrite(LED_GPIO35, LOW);
+    delay(80);
+    digitalWrite(LED_GPIO36, LOW);
+    delay(80);
+    digitalWrite(LED_GPIO33, HIGH);
+    delay(80);
+    digitalWrite(LED_GPIO34, HIGH);
+    delay(80);
+    digitalWrite(LED_GPIO35, HIGH);
+    delay(80);
+    digitalWrite(LED_GPIO36, HIGH);
+    delay(80);
+    digitalWrite(LED_GPIO33, LOW);
+    delay(80);
+    digitalWrite(LED_GPIO34, LOW);
+    delay(80);
+    digitalWrite(LED_GPIO35, LOW);
+    delay(80);
+    digitalWrite(LED_GPIO36, LOW);
 }
