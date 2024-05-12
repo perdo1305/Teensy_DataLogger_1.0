@@ -1,7 +1,7 @@
 /**
  * @file main.cpp
  * @brief This is the main file for the CAN logger project for L.A.R.T T24e
- * @author Perdu Ferreira
+ * @author Pedro Ferreira
  */
 
 #include <Arduino.h>
@@ -99,7 +99,9 @@ U8X8_SSD1306_128X64_NONAME_HW_I2C u8x8(SCL, SDA, U8X8_PIN_NONE);  // OLED contru
 
 volatile bool logging_active = false;  // If the data logger is active or not
 volatile bool DataLoggerActive = false;
+char FILE_NAME[30] = {};      // Name of the file to be logged to the SD card
 String dataString = "";       // String to be logged to the SD card
+int file_count = 0;           // Count how many files are in the SD card
 int file_num_int = 0;         // Keep track of the datalog.txt file number
 int file_num_plus_one = 0;    // Keep track of the datalog.txt file number
 File* dataFile_ptr;           // Pointer to the datafile to be closed by the interrupt
@@ -192,10 +194,10 @@ void setup() {
             u8x8.drawString(4, 2, "SD card");
             u8x8.drawString(4, 3, "failed!");
             Serial.println("Card failed, or not present");
-            delay(500);
+            delay(2000);
         }
     }
-    
+
     SD_card_status = true;
     Serial.println("card initialized.");
     // read a number from a file and increment it
@@ -224,6 +226,17 @@ void setup() {
     // write the incremented number to the file
     dataFile = SD.open("config.txt", FILE_WRITE);
 
+    // count how many files are in the SD card
+    File root = SD.open("/");
+    while (true) {
+        File entry = root.openNextFile();
+        if (!entry) {
+            break;
+        }
+        file_count++;
+        entry.close();
+    }
+    root.close();
     if (dataFile) {
         char buffer[20] = {};
         sprintf(buffer, "%d", file_num_plus_one);
@@ -242,36 +255,48 @@ void setup() {
     Serial.println("█▄▄ █▀█ █░▀█   █▄█ █▄█ ▄█   █▄▀ █▀█ ░█░ █▀█   █▄▄ █▄█ █▄█ █▄█ ██▄ █▀▄");
 
     /*############### Record Button ################*/
-    pinMode(BUTTON_PIN, INPUT_PULLUP);  // set the button pin as input with pullup resistor
+    pinMode(BUTTON_PIN, INPUT);
+    /*############### Update RTC by serial port ################*/
+    RTC_update_by_serial();
 
 #ifdef ENABLE_INTERRUPT
     attachInterrupt(  // attach interrupt to the button pin
         digitalPinToInterrupt(BUTTON_PIN), []() {
             // debounce
-            if (millis() - previousMillis[2] < 200) {
+            if (millis() - previousMillis[2] < 300) {
                 return;
             }
             previousMillis[2] = millis();
+            if (dataFile_ptr != nullptr)
+                dataFile_ptr->close();
 
             logging_active = !logging_active;
             Serial.println(logging_active ? "Logging started" : "Logging stopped");
+
+            // is first time logging active?create the file name with the current time
+            static bool firstime = true;
+            if (logging_active) {
+                firstime = false;
+                sprintf(FILE_NAME, "LOG_%02d-%02d-%02d_%02d-%02d-%02d.csv", day(), month(), year(), hour(), minute(), second());
+            }
         },
-        FALLING);
+        RISING);
 
 #else
     logging_active = true;
 #endif
 
-    attachInterrupt(  // attach interrupt to the button pin
+/*
+    attachInterrupt(  // attach interrupt to opamp protection pin
         digitalPinToInterrupt(OPAMP_PIN), []() {
             if (dataFile_ptr != nullptr)
                 dataFile_ptr->close();
         },
         RISING);
-
+*/
     /*##############################################*/
 
-    /*#################### CAN #####################*/
+    /*#################### CAN INIT ################*/
     can1.begin();
     can1.setBaudRate(1000000);
     can2.begin();
@@ -279,16 +304,12 @@ void setup() {
     can3.begin();
     can3.setBaudRate(1000000);
     /*##############################################*/
-    DataLoggerActive = true;
-
-    StartUpSequence();
 
 #ifdef __Screen_ON__
-
     u8x8.setI2CAddress(0x78);
     u8x8.begin();
     displayWelcome();
-    delay(2000);
+    delay(300);
     u8x8.clearDisplay();
 #endif
     /*################ WDT #############################################################################*/
@@ -297,51 +318,45 @@ void setup() {
     config.timeout = 10;            /* in seconds, 0->128 Timeout to reset */
     config.callback = wdtCallback;  // Callback function to be called on timeout
     wdt.begin(config);              // Start the watchdog timer
+    /*###################################################################################################*/
+
+    StartUpSequence();
+    DataLoggerActive = true;
 }
 
 void loop() {
-    // Serial1.println("Hello World");
-    if (Serial1.available()) {
-        Serial.println(Serial1.readString());
+    wdt.feed();  // Feed the whatchdog timer
+
+    MCU_heartbeat();  // Blink the built in led at 3.3Hz
+
+    Can1_things();  // Do the can1 receive things
+    Can2_things();  // Do the can2 receive things
+    Can3_things();  // Do the can3 receive things
+
+    sendDLstatus();  // Send the data logger status to the CAN bus
+
+    if (millis() - previousMillis[4] > 15) {
+        previousMillis[4] = millis();
+        if (logging_active) {  // Log the data string to the SD card if logging is active and can1rx_status is true
+            log_to_sdcard();
+            digitalToggle(LED_GPIO33);
+        } else {
+            digitalWrite(LED_GPIO33, LOW);
+        }
     }
+
+#ifdef __Screen_ON__
+    if (millis() - previousMillis[3] > 200) {
+        previousMillis[3] = millis();
+        displayDataLoggerStatus();  // Display the data logger status on the OLED
+    }
+#endif
+
 #if CANSART
     updateDB(&frames60);
     updateDB(&frames61);
     updateDB(&frames80);
     updateDB(&frames120);
-#endif
-
-    wdt.feed();  // Feed the whatchdog timer
-    RTC_update_by_serial();
-    MCU_heartbeat();  // Blink the built in led at 3.3Hz
-    // CAN_hearbeat();  // Blink the can bus rx led at 3.3Hz
-
-    sendDLstatus();  // Send the data logger status to the CAN bus
-    Can1_things();   // Do the can1 receive things
-<<<<<<< Updated upstream
-    // Can2_things();   // Do the can2 receive things
-
-    // delay 2ms
-    if (millis() - previousMillis[4] > 2) {
-        previousMillis[4] = millis();
-        if (logging_active && can1rx_status) {  // Log the data string to the SD card if logging is active and can1rx_status is true
-                                                // if (logging_active) {
-=======
-
-    if (millis() - previousMillis[4] > 10) {
-        previousMillis[4] = millis();
-        if (logging_active && can1rx_status) {  // Log the data string to the SD card if logging is active and can1rx_status is true
->>>>>>> Stashed changes
-            log_to_sdcard();
-            digitalToggle(LED1_pin);
-        }
-    }
-
-#ifdef __Screen_ON__
-    if (millis() - previousMillis[3] > 500) {
-        previousMillis[3] = millis();
-        displayDataLoggerStatus();  // Display the data logger status on the OLED
-    }
 #endif
 }
 
@@ -424,11 +439,17 @@ unsigned long processSyncMessage() {
  * @brief log the data string to the SD card
  */
 void log_to_sdcard() {
+    /*
     char file_name[20] = {};
     sprintf(file_name, "datalog_%d.csv", file_num_int);
+    */
+    dataString += "ola; \n";
+    if (dataString == "") {
+        return;
+    }
+    File dataFile = SD.open(FILE_NAME, FILE_WRITE);
+    //dataFile_ptr = &dataFile;
 
-    File dataFile = SD.open(file_name, FILE_WRITE);
-    dataFile_ptr = &dataFile;
     if (dataFile) {
         dataFile.print(dataString);
         dataFile.close();
@@ -437,9 +458,8 @@ void log_to_sdcard() {
         // Serial.println(dataString);
     } else {
         // if the file isn't open, pop up an error:
-        Serial.println("error opening datalog.txt");
+        Serial.println("error opening LOG file");
     }
-
     dataString = "";
 }
 
@@ -511,7 +531,7 @@ void receiveMarker(CAN_message_t msg, uint16_t id_start, uint16_t buf_index) {
  */
 void sendDLstatus() {
     currentMillis[0] = millis();
-    if (currentMillis[0] - previousMillis[0] > 5) {
+    if (currentMillis[0] - previousMillis[0] > 200) {
         previousMillis[0] = currentMillis[0];
         // DATA LOGGER STATUS
         txmsg.id = DataLogger_CanId;
@@ -526,11 +546,12 @@ void sendDLstatus() {
         txmsg.buf[7] = 6;
 
         can1.write(txmsg);
+        can2.write(txmsg);
+        can3.write(txmsg);
     }
 }
 
 void displayWelcome() {
-    // u8x8.setFont(u8x8_font_amstrad_cpc_extended_f);
     u8x8.setFont(u8x8_font_chroma48medium8_r);
     u8x8.setInverseFont(1);
     u8x8.drawString(5, 0, "L.A.R.T");
@@ -541,30 +562,42 @@ void displayWelcome() {
 }
 
 void displayDataLoggerStatus() {
-    // u8x8.setFont(u8x8_font_amstrad_cpc_extended_f);
     u8x8.setFont(u8x8_font_chroma48medium8_r);
+
+    /*
     u8x8.setInverseFont(1);
     u8x8.drawString(0, 0, "## DL Status ##");
     u8x8.setInverseFont(0);
+*/
     static int previous_can1rx_status = -1;
     if (previous_can1rx_status != can1rx_status) {
-        u8x8.clearLine(1);
+        u8x8.clearLine(0);
         if (can1rx_status) {
-            u8x8.drawString(0, 1, "CAN1: OK");
+            u8x8.drawString(0, 0, "CAN1: OK");
         } else {
-            u8x8.drawString(0, 1, "CAN1: ERROR");
+            u8x8.drawString(0, 0, "CAN1: ERROR");
         }
         previous_can1rx_status = can1rx_status;
     }
 
     static int previous_can2rx_status = -1;
     if (previous_can2rx_status != can2rx_status) {
-        u8x8.clearLine(2);
+        u8x8.clearLine(1);
         if (can2rx_status)
-            u8x8.drawString(0, 2, "CAN2: OK");
+            u8x8.drawString(0, 1, "CAN2: OK");
         else
-            u8x8.drawString(0, 2, "CAN2: ---");
+            u8x8.drawString(0, 1, "CAN2: ERROR");
         previous_can2rx_status = can2rx_status;
+    }
+
+    static int previous_can3rx_status = -1;
+    if (previous_can3rx_status != can3rx_status) {
+        u8x8.clearLine(2);
+        if (can3rx_status)
+            u8x8.drawString(0, 2, "CAN3: OK");
+        else
+            u8x8.drawString(0, 2, "CAN3: ERROR");
+        previous_can3rx_status = can3rx_status;
     }
     static int previous_logging_active = -1;
     if (previous_logging_active != logging_active) {
@@ -586,15 +619,17 @@ void displayDataLoggerStatus() {
         }
         previous_SD_card_status = SD_card_status;
     }
+
     char time_str[15];
     sprintf(time_str, "Time: %02d:%02d:%02d", hour(), minute(), second());
     u8x8.drawString(0, 5, time_str);
-    // file name
+
     static int previous_file_num_int = -1;
     if (previous_file_num_int != file_num_int) {
         u8x8.clearLine(6);
         char file_name[20] = {};
-        sprintf(file_name, "File num: %d", file_num_int);
+        // sprintf(file_name, "File num: %d", file_num_int);
+        sprintf(file_name, "File num: %d", file_count);
         u8x8.drawString(0, 6, file_name);
         previous_file_num_int = file_num_int;
     }
@@ -642,7 +677,7 @@ void sendTelemetry() {
 void Can1_things() {
     CAN_error_t error;
     if (can1.error(error, 0)) {
-        Serial.println("CAN1 ERROR");
+        //Serial.println("CAN1 ERROR");
         can1rx_status = false;
         digitalWrite(LED_GPIO34, LOW);  // turn off the can bus rx led
     } else {
@@ -715,7 +750,7 @@ void Can1_things() {
             digitalToggle(LED_GPIO34);  // toggle the can bus rx led
             builDataString(rxmsg);      // build the data string to be logged to the SD card
             can1rx_status = true;       // set the can1rx_status to true
-            Serial.print(rxmsg.id);     // print the data string to the serial port
+            // Serial.print(rxmsg.id);     // print the data string to the serial port
         }
     }
 }
@@ -729,8 +764,8 @@ void Can2_things() {
         if (can2.read(rxmsg2)) {
             digitalToggle(LED_GPIO35);  // toggle the can bus rx led
             // builDataString(rxmsg2);    // build the data string to be logged to the SD card
-            can2rx_status = true;     // set the can1rx_status to true
-            Serial.print(rxmsg2.id);  // print the data string to the serial port
+            can2rx_status = true;  // set the can1rx_status to true
+            // Serial.print(rxmsg2.id);  // print the data string to the serial port
         }
     }
 }
@@ -744,50 +779,30 @@ void Can3_things() {
         if (can3.read(rxmsg3)) {
             digitalToggle(LED_GPIO36);  // toggle the can bus rx led
             // builDataString(rxmsg3);    // build the data string to be logged to the SD card
-            can3rx_status = true;     // set the can1rx_status to true
-            Serial.print(rxmsg3.id);  // print the data string to the serial port
+            can3rx_status = true;  // set the can1rx_status to true
+            // Serial.print(rxmsg3.id);  // print the data string to the serial port
         }
     }
 }
 
 void StartUpSequence() {
+    const int leds[] = {LED_GPIO33, LED_GPIO34, LED_GPIO35, LED_GPIO36};
+    const int numLeds = sizeof(leds) / sizeof(leds[0]);
+
     pinMode(LED_GPIO33, OUTPUT);
     pinMode(LED_GPIO34, OUTPUT);
     pinMode(LED_GPIO35, OUTPUT);
     pinMode(LED_GPIO36, OUTPUT);
 
-    digitalWrite(LED_GPIO33, HIGH);
-    delay(80);
-    digitalWrite(LED_GPIO34, HIGH);
-    delay(80);
-    digitalWrite(LED_GPIO35, HIGH);
-    delay(80);
-    digitalWrite(LED_GPIO36, HIGH);
-    delay(80);
+    for (int j = 0; j < 3; ++j) {
+        for (int i = 0; i < numLeds; ++i) {
+            digitalWrite(leds[i], HIGH);
+            delay(50);
+        }
 
-    digitalWrite(LED_GPIO33, LOW);
-    delay(80);
-    digitalWrite(LED_GPIO34, LOW);
-    delay(80);
-    digitalWrite(LED_GPIO35, LOW);
-    delay(80);
-    digitalWrite(LED_GPIO36, LOW);
-    delay(80);
-
-    digitalWrite(LED_GPIO33, HIGH);
-    delay(80);
-    digitalWrite(LED_GPIO34, HIGH);
-    delay(80);
-    digitalWrite(LED_GPIO35, HIGH);
-    delay(80);
-    digitalWrite(LED_GPIO36, HIGH);
-    delay(80);
-
-    digitalWrite(LED_GPIO33, LOW);
-    delay(80);
-    digitalWrite(LED_GPIO34, LOW);
-    delay(80);
-    digitalWrite(LED_GPIO35, LOW);
-    delay(80);
-    digitalWrite(LED_GPIO36, LOW);
+        for (int i = 0; i < numLeds; ++i) {
+            digitalWrite(leds[i], LOW);
+            delay(50);
+        }
+    }
 }
