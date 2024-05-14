@@ -42,10 +42,6 @@ HardwareSerial& serialPort = Serial1;
 #define OPAMP_PIN 4       // pin for ampop interrupt
 #define BUTTON_PIN 5      // pin for button interrupt
 
-#define chipSelect BUILTIN_SDCARD
-#define LED1_pin 2
-#define LED2_pin 3
-
 #define __LART_DEBUG__  // comentar quando for para o carro
 
 #ifdef __LART_DEBUG__
@@ -62,6 +58,8 @@ HardwareSerial& serialPort = Serial1;
 #define LED_GPIO34 34
 #define LED_GPIO35 35
 #define LED_GPIO36 36
+
+#define Button_LED 37
 
 // #define __Telemetria_ON__  // descomentar quando for para o carro
 
@@ -90,6 +88,7 @@ void Can1_things(void);                                                        /
 void Can2_things(void);                                                        // Do the can2 receive things
 void Can3_things(void);                                                        // Do the can3 receive things
 void StartUpSequence(void);                                                    // LEDs startup sequence
+void BUTTON_LED_TASK(void);                                                    // Blink the button led
 
 WDT_T4<WDT1> wdt;                                                 // Watchdog timer config
 U8X8_SSD1306_128X64_NONAME_HW_I2C u8x8(SCL, SDA, U8X8_PIN_NONE);  // OLED contructor
@@ -286,14 +285,14 @@ void setup() {
     logging_active = true;
 #endif
 
-/*
-    attachInterrupt(  // attach interrupt to opamp protection pin
-        digitalPinToInterrupt(OPAMP_PIN), []() {
-            if (dataFile_ptr != nullptr)
-                dataFile_ptr->close();
-        },
-        RISING);
-*/
+    /*
+        attachInterrupt(  // attach interrupt to opamp protection pin
+            digitalPinToInterrupt(OPAMP_PIN), []() {
+                if (dataFile_ptr != nullptr)
+                    dataFile_ptr->close();
+            },
+            RISING);
+    */
     /*##############################################*/
 
     /*#################### CAN INIT ################*/
@@ -333,6 +332,8 @@ void loop() {
     Can2_things();  // Do the can2 receive things
     Can3_things();  // Do the can3 receive things
 
+    BUTTON_LED_TASK();
+
     sendDLstatus();  // Send the data logger status to the CAN bus
 
     if (millis() - previousMillis[4] > 15) {
@@ -368,21 +369,6 @@ void MCU_heartbeat() {
     if (currentMillis[1] - previousMillis[1] > 300) {
         previousMillis[1] = currentMillis[1];
         digitalToggle(LED_BUILTIN);
-    }
-}
-
-/**
- * @brief Blink the can bus rx led at 3.3Hz
- */
-void CAN_hearbeat() {
-    if (can1rx_status) {
-        currentMillis[2] = millis();
-        if (currentMillis[2] - previousMillis[2] > 300) {
-            previousMillis[2] = currentMillis[2];
-            digitalToggle(LED2_pin);
-        }
-    } else {
-        digitalWrite(LED2_pin, LOW);
     }
 }
 
@@ -448,7 +434,7 @@ void log_to_sdcard() {
         return;
     }
     File dataFile = SD.open(FILE_NAME, FILE_WRITE);
-    //dataFile_ptr = &dataFile;
+    // dataFile_ptr = &dataFile;
 
     if (dataFile) {
         dataFile.print(dataString);
@@ -677,7 +663,7 @@ void sendTelemetry() {
 void Can1_things() {
     CAN_error_t error;
     if (can1.error(error, 0)) {
-        //Serial.println("CAN1 ERROR");
+        // Serial.println("CAN1 ERROR");
         can1rx_status = false;
         digitalWrite(LED_GPIO34, LOW);  // turn off the can bus rx led
     } else {
@@ -804,5 +790,17 @@ void StartUpSequence() {
             digitalWrite(leds[i], LOW);
             delay(50);
         }
+    }
+}
+
+void BUTTON_LED_TASK(void) {
+    if (logging_active) {
+        if (millis() - previousMillis[5] > 500) {
+            previousMillis[5] = millis();
+            
+            digitalToggle(Button_LED);
+        }
+    } else {
+            digitalWrite(Button_LED, LOW);
     }
 }
