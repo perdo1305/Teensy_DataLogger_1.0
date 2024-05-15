@@ -464,6 +464,20 @@ void builDataString(CAN_message_t msg) {
     }
     dataString += "\n";
 }
+/*
+void buildDataString(CAN_message_t msg) {
+    //ms since start
+    uint8_t can_identifier=0;
+    dataString += csvSuffixer(milliseconds_calculation());
+    dataString += ';';
+    dataString += String(can_identifier,DEC);   
+    dataString += csvSuffixer(msg.id, HEX);
+    dataString += csvSuffixer(msg.len, HEX);
+    for (int i = 0; i < msg.len; i++) {
+        dataString += csvSuffixer(msg.buf[i], HEX);
+    }
+    dataString += "\n";
+}*/
 
 /**
  * @brief convert input to a string and prepend a ";" to it
