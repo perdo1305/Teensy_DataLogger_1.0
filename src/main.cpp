@@ -39,13 +39,15 @@ HardwareSerial& serialPort = Serial1;
 #define DataLogger_CanId 0x200
 
 #define ENABLE_INTERRUPT  // uncomment to always log to sd card //fode sd cards
-#define OPAMP_PIN 4       // pin for ampop interrupt
-#define BUTTON_PIN 5      // pin for button interrupt
+#define ENABLE_EXTERNAL_BUTTON 1
+
+#define OPAMP_PIN 4   // pin for ampop interrupt
+#define BUTTON_PIN 5  // pin for button interrupt
 
 #define __LART_DEBUG__  // comentar quando for para o carro
 
 #ifdef __LART_DEBUG__
-#define SERIAL_OPEN_TIMEOUT 5000
+#define SERIAL_OPEN_TIMEOUT 3000
 #define __Screen_ON__
 #define debug_begin(x) Serial.begin(x)
 #define debug_println(x) Serial.println(x)
@@ -60,6 +62,7 @@ HardwareSerial& serialPort = Serial1;
 #define LED_GPIO36 36
 
 #define Button_LED 37
+#define Button_Cockpit 28
 
 // #define __Telemetria_ON__  // descomentar quando for para o carro
 
@@ -96,15 +99,15 @@ U8X8_SSD1306_128X64_NONAME_HW_I2C u8x8(SCL, SDA, U8X8_PIN_NONE);  // OLED contru
 //__________________________________Variables______________________________________________________
 //_________________________________________________________________________________________________
 
-volatile bool logging_active = false;  // If the data logger is active or not
-volatile bool DataLoggerActive = false;
-char FILE_NAME[30] = {};      // Name of the file to be logged to the SD card
-String dataString = "";       // String to be logged to the SD card
-int file_count = 0;           // Count how many files are in the SD card
-int file_num_int = 0;         // Keep track of the datalog.txt file number
-int file_num_plus_one = 0;    // Keep track of the datalog.txt file number
-File* dataFile_ptr;           // Pointer to the datafile to be closed by the interrupt
-bool SD_card_status = false;  // If the SD card is present and initialized
+volatile bool logging_active = false;    // If the logging is active or not
+volatile bool DataLoggerActive = false;  // If the data logger is active or not
+char FILE_NAME[30] = {};                 // Name of the file to be logged to the SD card
+String dataString = "";                  // String to be logged to the SD card
+int file_count = 0;                      // Count how many files are in the SD card
+int file_num_int = 0;                    // Keep track of the datalog.txt file number
+int file_num_plus_one = 0;               // Keep track of the datalog.txt file number
+File* dataFile_ptr;                      // Pointer to the datafile to be closed by the interrupt
+bool SD_card_status = false;             // If the SD card is present and initialized
 
 // ________Millis()________
 unsigned long currentMillis[10] = {};   // Array to hold the current time
@@ -139,17 +142,15 @@ void sendTelemetry(void);
 void wdtCallback() {
     Serial.println("FEED THE DOG SOON, OR RESET!");
 }
-
+// %%%%%%%%%%%%%%%%%%%%%%%%%%%%%% SETUP %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 void setup() {
     setSyncProvider(getTeensy3Time);  // Set the Time library to use Teensy 3.0's RTC to keep time
 #ifdef __Telemetria_ON__
     TelemetryTimer.begin(sendTelemetry, 20000);  // interval timer for telemetry
 #endif
-    /*############ MCU heartbeat #######################################################################*/
+
     pinMode(LED_BUILTIN, OUTPUT);     // initialize the built-in LED pin as an output
     digitalWrite(LED_BUILTIN, HIGH);  // turn on the built in led
-
-    /*##################################################################################################*/
 
     unsigned long OV_millis = 0;  // Overflow millis
     OV_millis = millis();         // Overflow millis
@@ -255,10 +256,14 @@ void setup() {
 
     /*############### Record Button ################*/
     pinMode(BUTTON_PIN, INPUT);
+    pinMode(Button_LED, OUTPUT);
+    digitalWrite(Button_LED, LOW);
+    pinMode(Button_Cockpit, INPUT_PULLUP);
     /*############### Update RTC by serial port ################*/
     RTC_update_by_serial();
 
 #ifdef ENABLE_INTERRUPT
+/*
     attachInterrupt(  // attach interrupt to the button pin
         digitalPinToInterrupt(BUTTON_PIN), []() {
             // debounce
@@ -273,26 +278,38 @@ void setup() {
             Serial.println(logging_active ? "Logging started" : "Logging stopped");
 
             // is first time logging active?create the file name with the current time
-            static bool firstime = true;
+            // static bool firstime = true;
             if (logging_active) {
-                firstime = false;
+                // firstime = false;
                 sprintf(FILE_NAME, "LOG_%02d-%02d-%02d_%02d-%02d-%02d.csv", day(), month(), year(), hour(), minute(), second());
             }
         },
         RISING);
-
+*/
 #else
     logging_active = true;
 #endif
 
-    /*
-        attachInterrupt(  // attach interrupt to opamp protection pin
-            digitalPinToInterrupt(OPAMP_PIN), []() {
-                if (dataFile_ptr != nullptr)
-                    dataFile_ptr->close();
-            },
-            RISING);
-    */
+#ifdef ENABLE_EXTERNAL_BUTTON
+    attachInterrupt(  // attach interrupt to the button pin
+        digitalPinToInterrupt(Button_Cockpit), []() {
+            digitalWrite(Button_LED, LOW);
+            // debounce
+            if (millis() - previousMillis[2] < 100) {
+                return;
+            }
+            previousMillis[2] = millis();
+
+            logging_active = !logging_active;
+            Serial.println(logging_active ? "Logging started" : "Logging stopped");
+
+            if (logging_active) {
+                sprintf(FILE_NAME, "LOG_%02d-%02d-%02d_%02d-%02d-%02d.csv", day(), month(), year(), hour(), minute(), second());
+            }
+        },
+        RISING);
+#endif
+
     /*##############################################*/
 
     /*#################### CAN INIT ################*/
@@ -470,7 +487,7 @@ void buildDataString(CAN_message_t msg) {
     uint8_t can_identifier=0;
     dataString += csvSuffixer(milliseconds_calculation());
     dataString += ';';
-    dataString += String(can_identifier,DEC);   
+    dataString += String(can_identifier,DEC);
     dataString += csvSuffixer(msg.id, HEX);
     dataString += csvSuffixer(msg.len, HEX);
     for (int i = 0; i < msg.len; i++) {
@@ -808,13 +825,44 @@ void StartUpSequence() {
 }
 
 void BUTTON_LED_TASK(void) {
+
+    //blick 3 times and then pause for 3 times and repeat
     if (logging_active) {
-        if (millis() - previousMillis[5] > 500) {
-            previousMillis[5] = millis();
-            
-            digitalToggle(Button_LED);
-        }
+        currentMillis[5] = millis();
+        digitalWrite(Button_LED, HIGH);
     } else {
+        static uint8_t i = 0;
+        static bool pause_mode = false;
+        if (i == 4) {
+            i = 0;
+            pause_mode = true;
+        }
+
+        if (!pause_mode) {
+            bool ledState = digitalRead(Button_LED);
+            if (ledState) {
+                currentMillis[5] = millis();
+                if (currentMillis[5] - previousMillis[5] > 375) {
+                    previousMillis[5] = currentMillis[5];
+                    digitalWrite(Button_LED, LOW);
+                }
+            } else {
+                currentMillis[5] = millis();
+                if (currentMillis[5] - previousMillis[5] > 100) {
+                    previousMillis[5] = currentMillis[5];
+                    digitalWrite(Button_LED, HIGH);
+                    i++;
+                }
+            }
+        }else{
+            currentMillis[5] = millis();
             digitalWrite(Button_LED, LOW);
+            if (currentMillis[5] - previousMillis[5] > 1000) {
+                previousMillis[5] = currentMillis[5];
+                pause_mode = false;
+            }
+        }
+        
     }
+
 }
