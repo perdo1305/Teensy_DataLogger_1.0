@@ -84,7 +84,7 @@ void log_to_sdcard(void);                                                      /
 void sendDLstatus(void);                                                       // Send the data logger status to the CAN bus
 void receiveStart(CAN_message_t msg, uint16_t id_start, uint16_t buf_index);   // Start/Stop the data logger by receiving a CAN frame
 void receiveMarker(CAN_message_t msg, uint16_t id_start, uint16_t buf_index);  // Receive a marker from the CAN bus
-void builDataString(CAN_message_t msg);                                        // Build the data string to be logged to the SD card
+void builDataString(CAN_message_t msg, uint8_t can_identifier);                                 // Build the data string to be logged to the SD card
 void displayWelcome(void);                                                     // Display the welcome message on the OLED
 void displayDataLoggerStatus(void);                                            // Display the data logger status on the OLED
 void Can1_things(void);                                                        // Do the can1 receive things
@@ -446,7 +446,7 @@ void log_to_sdcard() {
     char file_name[20] = {};
     sprintf(file_name, "datalog_%d.csv", file_num_int);
     */
-    dataString += "ola; \n";
+    //dataString += "ola; \n";
     if (dataString == "") {
         return;
     }
@@ -469,6 +469,7 @@ void log_to_sdcard() {
 /**
  * @brief Build the data string to be logged to the SD card
  */
+/*
 void builDataString(CAN_message_t msg) {
     dataString += String(hour());
     dataString += csvSuffixer(minute());
@@ -481,20 +482,20 @@ void builDataString(CAN_message_t msg) {
     }
     dataString += "\n";
 }
-/*
-void buildDataString(CAN_message_t msg) {
-    //ms since start
-    uint8_t can_identifier=0;
+*/
+void builDataString(CAN_message_t msg, uint8_t can_identifier) {
+    dataString += String(hour());
+    dataString += csvSuffixer(minute());
+    dataString += csvSuffixer(second());
     dataString += csvSuffixer(milliseconds_calculation());
-    dataString += ';';
-    dataString += String(can_identifier,DEC);
+    dataString += csvSuffixer(can_identifier, DEC);
     dataString += csvSuffixer(msg.id, HEX);
-    dataString += csvSuffixer(msg.len, HEX);
+    dataString += csvSuffixer(msg.len, DEC);
     for (int i = 0; i < msg.len; i++) {
-        dataString += csvSuffixer(msg.buf[i], HEX);
+        dataString += csvSuffixer(msg.buf[i], DEC);
     }
     dataString += "\n";
-}*/
+}
 
 /**
  * @brief convert input to a string and prepend a ";" to it
@@ -765,7 +766,7 @@ void Can1_things() {
             }
 
             digitalToggle(LED_GPIO34);  // toggle the can bus rx led
-            builDataString(rxmsg);      // build the data string to be logged to the SD card
+            builDataString(rxmsg,1);      // build the data string to be logged to the SD card
             can1rx_status = true;       // set the can1rx_status to true
             // Serial.print(rxmsg.id);     // print the data string to the serial port
         }
@@ -780,7 +781,7 @@ void Can2_things() {
     } else {
         if (can2.read(rxmsg2)) {
             digitalToggle(LED_GPIO35);  // toggle the can bus rx led
-            // builDataString(rxmsg2);    // build the data string to be logged to the SD card
+            builDataString(rxmsg2,2);    // build the data string to be logged to the SD card
             can2rx_status = true;  // set the can1rx_status to true
             // Serial.print(rxmsg2.id);  // print the data string to the serial port
         }
@@ -795,7 +796,7 @@ void Can3_things() {
     } else {
         if (can3.read(rxmsg3)) {
             digitalToggle(LED_GPIO36);  // toggle the can bus rx led
-            // builDataString(rxmsg3);    // build the data string to be logged to the SD card
+            builDataString(rxmsg3,3);    // build the data string to be logged to the SD card
             can3rx_status = true;  // set the can1rx_status to true
             // Serial.print(rxmsg3.id);  // print the data string to the serial port
         }
@@ -825,8 +826,7 @@ void StartUpSequence() {
 }
 
 void BUTTON_LED_TASK(void) {
-
-    //blick 3 times and then pause for 3 times and repeat
+    // blick 3 times and then pause for 3 times and repeat
     if (logging_active) {
         currentMillis[5] = millis();
         digitalWrite(Button_LED, HIGH);
@@ -854,7 +854,7 @@ void BUTTON_LED_TASK(void) {
                     i++;
                 }
             }
-        }else{
+        } else {
             currentMillis[5] = millis();
             digitalWrite(Button_LED, LOW);
             if (currentMillis[5] - previousMillis[5] > 1000) {
@@ -862,7 +862,5 @@ void BUTTON_LED_TASK(void) {
                 pause_mode = false;
             }
         }
-        
     }
-
 }
