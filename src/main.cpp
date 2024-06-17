@@ -84,7 +84,7 @@ void log_to_sdcard(void);                                                      /
 void sendDLstatus(void);                                                       // Send the data logger status to the CAN bus
 void receiveStart(CAN_message_t msg, uint16_t id_start, uint16_t buf_index);   // Start/Stop the data logger by receiving a CAN frame
 void receiveMarker(CAN_message_t msg, uint16_t id_start, uint16_t buf_index);  // Receive a marker from the CAN bus
-void builDataString(CAN_message_t msg, uint8_t can_identifier);                                 // Build the data string to be logged to the SD card
+void builDataString(CAN_message_t msg, uint8_t can_identifier);                // Build the data string to be logged to the SD card
 void displayWelcome(void);                                                     // Display the welcome message on the OLED
 void displayDataLoggerStatus(void);                                            // Display the data logger status on the OLED
 void Can1_things(void);                                                        // Do the can1 receive things
@@ -293,19 +293,19 @@ void setup() {
 #ifdef ENABLE_EXTERNAL_BUTTON
     attachInterrupt(  // attach interrupt to the button pin
         digitalPinToInterrupt(Button_Cockpit), []() {
-            digitalWrite(Button_LED, LOW);
             // debounce
-            if (millis() - previousMillis[2] < 100) {
-                return;
+            if (millis() - previousMillis[2] < 20) {
+            } else {
+                if (dataFile_ptr != nullptr) {
+                    dataFile_ptr->close();
+                }
+                logging_active = !logging_active;
+
+                if (logging_active) {
+                    sprintf(FILE_NAME, "LOG_%02d-%02d-%02d_%02d-%02d-%02d.csv", day(), month(), year(), hour(), minute(), second());
+                }
             }
             previousMillis[2] = millis();
-
-            logging_active = !logging_active;
-            Serial.println(logging_active ? "Logging started" : "Logging stopped");
-
-            if (logging_active) {
-                sprintf(FILE_NAME, "LOG_%02d-%02d-%02d_%02d-%02d-%02d.csv", day(), month(), year(), hour(), minute(), second());
-            }
         },
         RISING);
 #endif
@@ -338,6 +338,7 @@ void setup() {
 
     StartUpSequence();
     DataLoggerActive = true;
+    logging_active = false;
 }
 
 void loop() {
@@ -446,7 +447,7 @@ void log_to_sdcard() {
     char file_name[20] = {};
     sprintf(file_name, "datalog_%d.csv", file_num_int);
     */
-    //dataString += "ola; \n";
+    // dataString += "ola; \n";
     if (dataString == "") {
         return;
     }
@@ -484,10 +485,20 @@ void builDataString(CAN_message_t msg) {
 }
 */
 void builDataString(CAN_message_t msg, uint8_t can_identifier) {
+    /*
     dataString += String(hour());
     dataString += csvSuffixer(minute());
     dataString += csvSuffixer(second());
     dataString += csvSuffixer(milliseconds_calculation());
+*/
+    // HH:MM:SS.mmm;
+    dataString += String(hour());
+    dataString += ":";
+    dataString += String(minute());
+    dataString += ":";
+    dataString += String(second());
+    dataString += ".";
+    dataString += String(milliseconds_calculation());
     dataString += csvSuffixer(can_identifier, DEC);
     dataString += csvSuffixer(msg.id, HEX);
     dataString += csvSuffixer(msg.len, DEC);
@@ -528,7 +539,7 @@ String csvSuffixer(String value) {
  * @return void
  */
 void receiveStart(CAN_message_t msg, uint16_t id_start, uint16_t buf_index) {
-    if (msg.id == id_start) {  // TODO RPM> tal comecar o logging ou tensao do inversor etc
+    if (msg.id == id_start) {  // TODO RPM > tal comecar o logging ou tensao do inversor etc
         msg.buf[buf_index] >= 1 ? logging_active = true : logging_active = false;
     }
 }
@@ -693,7 +704,7 @@ void sendTelemetry() {
 
 // TODO Stearing angle
 void Can1_things() {
-    CAN_error_t error;
+    static CAN_error_t error;
     if (can1.error(error, 0)) {
         // Serial.println("CAN1 ERROR");
         can1rx_status = false;
@@ -766,7 +777,7 @@ void Can1_things() {
             }
 
             digitalToggle(LED_GPIO34);  // toggle the can bus rx led
-            builDataString(rxmsg,1);      // build the data string to be logged to the SD card
+            builDataString(rxmsg, 1);   // build the data string to be logged to the SD card
             can1rx_status = true;       // set the can1rx_status to true
             // Serial.print(rxmsg.id);     // print the data string to the serial port
         }
@@ -774,30 +785,30 @@ void Can1_things() {
 }
 
 void Can2_things() {
-    CAN_error_t error;
+    static CAN_error_t error;
     if (can2.error(error, 0)) {
         can2rx_status = false;
         digitalWrite(LED_GPIO35, LOW);  // turn off the can bus rx led
     } else {
         if (can2.read(rxmsg2)) {
             digitalToggle(LED_GPIO35);  // toggle the can bus rx led
-            builDataString(rxmsg2,2);    // build the data string to be logged to the SD card
-            can2rx_status = true;  // set the can1rx_status to true
+            builDataString(rxmsg2, 2);  // build the data string to be logged to the SD card
+            can2rx_status = true;       // set the can1rx_status to true
             // Serial.print(rxmsg2.id);  // print the data string to the serial port
         }
     }
 }
 
 void Can3_things() {
-    CAN_error_t error;
+    static CAN_error_t error;
     if (can3.error(error, 0)) {
         can3rx_status = false;
         digitalWrite(LED_GPIO36, LOW);  // turn off the can bus rx led
     } else {
         if (can3.read(rxmsg3)) {
             digitalToggle(LED_GPIO36);  // toggle the can bus rx led
-            builDataString(rxmsg3,3);    // build the data string to be logged to the SD card
-            can3rx_status = true;  // set the can1rx_status to true
+            builDataString(rxmsg3, 3);  // build the data string to be logged to the SD card
+            can3rx_status = true;       // set the can1rx_status to true
             // Serial.print(rxmsg3.id);  // print the data string to the serial port
         }
     }
@@ -825,41 +836,35 @@ void StartUpSequence() {
     }
 }
 
+
 void BUTTON_LED_TASK(void) {
-    // blick 3 times and then pause for 3 times and repeat
+    static uint8_t blinkCount = 0;
+    static bool isPauseMode = false;
+    static unsigned long lastChangeTime = 0;
+    unsigned long currentMillis = millis();
+
     if (logging_active) {
-        currentMillis[5] = millis();
         digitalWrite(Button_LED, HIGH);
     } else {
-        static uint8_t i = 0;
-        static bool pause_mode = false;
-        if (i == 4) {
-            i = 0;
-            pause_mode = true;
-        }
-
-        if (!pause_mode) {
-            bool ledState = digitalRead(Button_LED);
-            if (ledState) {
-                currentMillis[5] = millis();
-                if (currentMillis[5] - previousMillis[5] > 375) {
-                    previousMillis[5] = currentMillis[5];
-                    digitalWrite(Button_LED, LOW);
-                }
-            } else {
-                currentMillis[5] = millis();
-                if (currentMillis[5] - previousMillis[5] > 100) {
-                    previousMillis[5] = currentMillis[5];
-                    digitalWrite(Button_LED, HIGH);
-                    i++;
-                }
+        if (isPauseMode) {
+            digitalWrite(Button_LED, LOW);
+            if (currentMillis - lastChangeTime > 1000) {
+                lastChangeTime = currentMillis;
+                isPauseMode = false;
             }
         } else {
-            currentMillis[5] = millis();
-            digitalWrite(Button_LED, LOW);
-            if (currentMillis[5] - previousMillis[5] > 1000) {
-                previousMillis[5] = currentMillis[5];
-                pause_mode = false;
+            if (blinkCount < 3) {
+                if ((digitalRead(Button_LED) == HIGH && currentMillis - lastChangeTime > 375) ||
+                    (digitalRead(Button_LED) == LOW && currentMillis - lastChangeTime > 100)) {
+                    digitalWrite(Button_LED, !digitalRead(Button_LED));
+                    lastChangeTime = currentMillis;
+                    if (digitalRead(Button_LED) == HIGH) {
+                        blinkCount++;
+                    }
+                }
+            } else {
+                blinkCount = 0;
+                isPauseMode = true;
             }
         }
     }
