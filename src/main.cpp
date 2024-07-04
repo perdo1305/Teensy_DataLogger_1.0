@@ -37,6 +37,7 @@ HardwareSerial& serialPort = Serial1;
 //__________________________________Defines_________________________________________________________
 //________________________________________________________________________________________________
 #define DataLogger_CanId 0x200
+#define XANATO_PIN 29
 
 #define ENABLE_INTERRUPT  // uncomment to always log to sd card //fode sd cards
 #define ENABLE_EXTERNAL_BUTTON 1
@@ -84,7 +85,7 @@ void log_to_sdcard(void);                                                      /
 void sendDLstatus(void);                                                       // Send the data logger status to the CAN bus
 void receiveStart(CAN_message_t msg, uint16_t id_start, uint16_t buf_index);   // Start/Stop the data logger by receiving a CAN frame
 void receiveMarker(CAN_message_t msg, uint16_t id_start, uint16_t buf_index);  // Receive a marker from the CAN bus
-void builDataString(CAN_message_t msg, uint8_t can_identifier);                                 // Build the data string to be logged to the SD card
+void builDataString(CAN_message_t msg, uint8_t can_identifier);                // Build the data string to be logged to the SD card
 void displayWelcome(void);                                                     // Display the welcome message on the OLED
 void displayDataLoggerStatus(void);                                            // Display the data logger status on the OLED
 void Can1_things(void);                                                        // Do the can1 receive things
@@ -134,6 +135,8 @@ CAN_message_t txmsg2;  // Struct to hold sent CAN message
 CAN_message_t rxmsg3;  // Struct to hold received CAN message
 CAN_message_t txmsg3;  // Struct to hold sent CAN message
 
+uint16_t HV = 0;  // High voltage
+
 //______Telemetria_______
 float CAN_Bus_Data[50];
 IntervalTimer TelemetryTimer;
@@ -150,7 +153,9 @@ void setup() {
 #endif
 
     pinMode(LED_BUILTIN, OUTPUT);     // initialize the built-in LED pin as an output
+    pinMode(XANATO_PIN, OUTPUT);                
     digitalWrite(LED_BUILTIN, HIGH);  // turn on the built in led
+    digitalWrite(XANATO_PIN, LOW);  // turn on the built in led
 
     unsigned long OV_millis = 0;  // Overflow millis
     OV_millis = millis();         // Overflow millis
@@ -258,9 +263,18 @@ void setup() {
     pinMode(BUTTON_PIN, INPUT);
     pinMode(Button_LED, OUTPUT);
     digitalWrite(Button_LED, LOW);
+
+    pinMode(OPAMP_PIN, INPUT_PULLDOWN);
     pinMode(Button_Cockpit, INPUT_PULLUP);
     /*############### Update RTC by serial port ################*/
     RTC_update_by_serial();
+
+    attachInterrupt(  // attach interrupt to opamp protection pin
+        digitalPinToInterrupt(OPAMP_PIN), []() {
+            if (dataFile_ptr != nullptr)
+                dataFile_ptr->close();
+        },
+        RISING);
 
 #ifdef ENABLE_INTERRUPT
 /*
@@ -446,12 +460,12 @@ void log_to_sdcard() {
     char file_name[20] = {};
     sprintf(file_name, "datalog_%d.csv", file_num_int);
     */
-    //dataString += "ola; \n";
+    // dataString += "ola; \n";
     if (dataString == "") {
         return;
     }
     File dataFile = SD.open(FILE_NAME, FILE_WRITE);
-    // dataFile_ptr = &dataFile;
+    dataFile_ptr = &dataFile;
 
     if (dataFile) {
         dataFile.print(dataString);
@@ -591,9 +605,9 @@ void displayDataLoggerStatus() {
     if (previous_can1rx_status != can1rx_status) {
         u8x8.clearLine(0);
         if (can1rx_status) {
-            u8x8.drawString(0, 0, "CAN1: OK");
+            u8x8.drawString(0, 0, "CAN_D: OK");
         } else {
-            u8x8.drawString(0, 0, "CAN1: ERROR");
+            u8x8.drawString(0, 0, "CAN_D: ERROR");
         }
         previous_can1rx_status = can1rx_status;
     }
@@ -602,9 +616,9 @@ void displayDataLoggerStatus() {
     if (previous_can2rx_status != can2rx_status) {
         u8x8.clearLine(1);
         if (can2rx_status)
-            u8x8.drawString(0, 1, "CAN2: OK");
+            u8x8.drawString(0, 1, "CAN_P: OK");
         else
-            u8x8.drawString(0, 1, "CAN2: ERROR");
+            u8x8.drawString(0, 1, "CAN_P: ERROR");
         previous_can2rx_status = can2rx_status;
     }
 
@@ -612,9 +626,9 @@ void displayDataLoggerStatus() {
     if (previous_can3rx_status != can3rx_status) {
         u8x8.clearLine(2);
         if (can3rx_status)
-            u8x8.drawString(0, 2, "CAN3: OK");
+            u8x8.drawString(0, 2, "CAN_A: OK");
         else
-            u8x8.drawString(0, 2, "CAN3: ERROR");
+            u8x8.drawString(0, 2, "CAN_A: ERROR");
         previous_can3rx_status = can3rx_status;
     }
     static int previous_logging_active = -1;
@@ -766,7 +780,7 @@ void Can1_things() {
             }
 
             digitalToggle(LED_GPIO34);  // toggle the can bus rx led
-            builDataString(rxmsg,1);      // build the data string to be logged to the SD card
+            builDataString(rxmsg, 1);   // build the data string to be logged to the SD card
             can1rx_status = true;       // set the can1rx_status to true
             // Serial.print(rxmsg.id);     // print the data string to the serial port
         }
@@ -781,9 +795,15 @@ void Can2_things() {
     } else {
         if (can2.read(rxmsg2)) {
             digitalToggle(LED_GPIO35);  // toggle the can bus rx led
-            builDataString(rxmsg2,2);    // build the data string to be logged to the SD card
-            can2rx_status = true;  // set the can1rx_status to true
+            builDataString(rxmsg2, 2);  // build the data string to be logged to the SD card
+            can2rx_status = true;       // set the can1rx_status to true
             // Serial.print(rxmsg2.id);  // print the data string to the serial port
+            if(rxmsg2.id == 0x14){
+                HV = rxmsg2.buf[6] << 8 | rxmsg2.buf[7];
+                if (HV > 5){
+                     digitalWrite(XANATO_PIN, HIGH);  // turn on the can bus rx led
+                }
+            }
         }
     }
 }
@@ -796,8 +816,8 @@ void Can3_things() {
     } else {
         if (can3.read(rxmsg3)) {
             digitalToggle(LED_GPIO36);  // toggle the can bus rx led
-            builDataString(rxmsg3,3);    // build the data string to be logged to the SD card
-            can3rx_status = true;  // set the can1rx_status to true
+            builDataString(rxmsg3, 3);  // build the data string to be logged to the SD card
+            can3rx_status = true;       // set the can1rx_status to true
             // Serial.print(rxmsg3.id);  // print the data string to the serial port
         }
     }
