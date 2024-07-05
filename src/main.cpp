@@ -20,6 +20,8 @@
 
 #define CANSART 0
 
+#define HV_PrechargeVoltage 280
+
 #if CANSART
 frame60 frames60;
 frame120 frames120;
@@ -586,8 +588,12 @@ void sendDLstatus() {
         txmsg.buf[4] = 3;
         txmsg.buf[5] = 4;
         txmsg.buf[6] = 5;
-        txmsg.buf[7] = 6;
-
+        if(HV > HV_PrechargeVoltage){
+            txmsg.buf[7] = 1;
+        }else{
+            txmsg.buf[7] = 0;
+        }
+        
         can1.write(txmsg);
         can2.write(txmsg);
         can3.write(txmsg);
@@ -672,9 +678,13 @@ void displayDataLoggerStatus() {
         u8x8.clearLine(6);
         char file_name[20] = {};
         // sprintf(file_name, "File num: %d", file_num_int);
+        /*
         sprintf(file_name, "File num: %d", file_count);
         u8x8.drawString(0, 6, file_name);
-        previous_file_num_int = file_num_int;
+        previous_file_num_int = file_num_int;*/
+
+        sprintf(file_name, "HV: %d", HV);
+        u8x8.drawString(0, 6, file_name);
     }
 }
 
@@ -811,8 +821,10 @@ void Can2_things() {
             // Serial.print(rxmsg2.id);  // print the data string to the serial port
             if(rxmsg2.id == 0x14){
                 HV = rxmsg2.buf[6] << 8 | rxmsg2.buf[7];
-                if (HV > 5){
-                     digitalWrite(XANATO_PIN, HIGH);  // turn on the can bus rx led
+                if (HV > HV_PrechargeVoltage){
+                     digitalWrite(XANATO_PIN, HIGH); 
+                }else{
+                    digitalWrite(XANATO_PIN, LOW); 
                 }
             }
         }
