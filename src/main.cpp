@@ -18,16 +18,19 @@
 #include "CANSART_STR/src/cansart.h"
 #include "Watchdog_t4.h"
 
-#define CANSART 0
+#define CANSART 1
 
 #define HV_PrechargeVoltage 280
 
 #if CANSART
+frame10 frames10;
+frame20 frames20;
 frame60 frames60;
-frame120 frames120;
 frame61 frames61;
-frame80 frames80;
-HardwareSerial& serialPort = Serial1;
+frame62 frames62;
+frame121 frames121;
+
+HardwareSerial& serialPort = Serial5;
 #endif
 
 // #define rx7Pin 28
@@ -137,12 +140,14 @@ CAN_message_t txmsg2;  // Struct to hold sent CAN message
 CAN_message_t rxmsg3;  // Struct to hold received CAN message
 CAN_message_t txmsg3;  // Struct to hold sent CAN message
 
-uint16_t HV = 0;  // High voltage
+uint16_t HV = 0;          // High voltage
+long long HV500_RPM = 0;  // rpm from inverter
 
 //______Telemetria_______
 float CAN_Bus_Data[50];
 IntervalTimer TelemetryTimer;
 void sendTelemetry(void);
+void updateCANSART(void);
 
 void wdtCallback() {
     Serial.println("FEED THE DOG SOON, OR RESET!");
@@ -154,10 +159,10 @@ void setup() {
     TelemetryTimer.begin(sendTelemetry, 20000);  // interval timer for telemetry
 #endif
 
-    pinMode(LED_BUILTIN, OUTPUT);     // initialize the built-in LED pin as an output
-    pinMode(XANATO_PIN, OUTPUT);                
+    pinMode(LED_BUILTIN, OUTPUT);  // initialize the built-in LED pin as an output
+    pinMode(XANATO_PIN, OUTPUT);
     digitalWrite(LED_BUILTIN, HIGH);  // turn on the built in led
-    digitalWrite(XANATO_PIN, LOW);  // turn on the built in led
+    digitalWrite(XANATO_PIN, LOW);    // turn on the built in led
 
     unsigned long OV_millis = 0;  // Overflow millis
     OV_millis = millis();         // Overflow millis
@@ -170,7 +175,7 @@ void setup() {
 
     // Hardware
 #if CANSART
-    setCANSART_Driver(serialPort, (unsigned long)4800);
+    setCANSART_Driver(serialPort, (unsigned long)115200);
 #endif
     // Serial7.setRX(28);
     // Serial7.begin(9600);  // Telemetria
@@ -324,6 +329,8 @@ void setup() {
             previousMillis[2] = millis();
         },
         RISING);
+#else
+    logging_active = true;
 #endif
 
     /*##############################################*/
@@ -354,7 +361,7 @@ void setup() {
 
     StartUpSequence();
     DataLoggerActive = true;
-    logging_active = false;
+    // logging_active = false;
 }
 
 void loop() {
@@ -388,12 +395,21 @@ void loop() {
 #endif
 
 #if CANSART
-    updateDB(&frames60);
-    updateDB(&frames61);
-    updateDB(&frames80);
-    updateDB(&frames120);
+
+    updateCANSART();
+   // Serial5.println("ola");
+   /*
+    if (Serial5.available()) {
+        char buffer[100] = {};
+        Serial5.readBytesUntil('\n', buffer, 100);
+
+
+        Serial.println(buffer);
+    }*/
+
 #endif
 }
+
 
 /**
  * @brief Blink the built in led at 3.3Hz
@@ -404,6 +420,8 @@ void MCU_heartbeat() {
         previousMillis[1] = currentMillis[1];
         digitalToggle(LED_BUILTIN);
     }
+    //fade the led
+    
 }
 
 //_________________________________________________________________________________________________
@@ -467,6 +485,8 @@ void log_to_sdcard() {
     if (dataString == "") {
         return;
     }
+    char FILE_NAME[30] = {};
+    sprintf(FILE_NAME, "LOG_%02d-%02d-%02d_%02d-%02d-%02d.csv", day(), month(), year(), hour(), minute(), second());
     File dataFile = SD.open(FILE_NAME, FILE_WRITE);
     dataFile_ptr = &dataFile;
 
@@ -578,6 +598,7 @@ void sendDLstatus() {
     currentMillis[0] = millis();
     if (currentMillis[0] - previousMillis[0] > 200) {
         previousMillis[0] = currentMillis[0];
+        memset(&txmsg, 0, sizeof(txmsg));
         // DATA LOGGER STATUS
         txmsg.id = DataLogger_CanId;
         txmsg.len = 8;
@@ -588,14 +609,22 @@ void sendDLstatus() {
         txmsg.buf[4] = 3;
         txmsg.buf[5] = 4;
         txmsg.buf[6] = 5;
-        if(HV > HV_PrechargeVoltage){
+        if (HV > HV_PrechargeVoltage) {
             txmsg.buf[7] = 1;
-        }else{
+        } else {
             txmsg.buf[7] = 0;
         }
-        
+
         can1.write(txmsg);
         can2.write(txmsg);
+
+        memset(&txmsg, 0, sizeof(txmsg));
+        txmsg.id = 0x510;
+        txmsg.len = 2;
+        int32_t HV500_RPM_10 = HV500_RPM / 10;
+        txmsg.buf[0] = HV500_RPM_10 >> 8;
+        txmsg.buf[1] = HV500_RPM_10;
+
         can3.write(txmsg);
     }
 }
@@ -683,7 +712,7 @@ void displayDataLoggerStatus() {
         u8x8.drawString(0, 6, file_name);
         previous_file_num_int = file_num_int;*/
 
-        sprintf(file_name, "HV: %d", HV);
+        sprintf(file_name, "RPM: %d", HV500_RPM);
         u8x8.drawString(0, 6, file_name);
     }
 }
@@ -738,6 +767,7 @@ void Can1_things() {
             switch (rxmsg.id) {
                 case 0x60:
 #if CANSART
+/*
                     frames60.DATA1 = rxmsg.buf[0];
                     frames60.DATA2 = rxmsg.buf[1];
                     frames60.DATA3 = rxmsg.buf[2];
@@ -745,7 +775,7 @@ void Can1_things() {
                     frames60.DATA5 = rxmsg.buf[4];
                     frames60.DATA6 = rxmsg.buf[5];
                     frames60.DATA7 = rxmsg.buf[6];
-                    frames60.DATA8 = rxmsg.buf[7];
+                    frames60.DATA8 = rxmsg.buf[7];*/
 #endif
                     /*
                         carDataMain.RPM = rxmsg.buf[0] << 8 | rxmsg.buf[1];
@@ -757,6 +787,7 @@ void Can1_things() {
                 case 0x61:
                     // carDataMain.VSPD = rxmsg.buf[0] << 8 | rxmsg.buf[1];
 #if CANSART
+/*
                     frames61.DATA1 = rxmsg.buf[0];
                     frames61.DATA2 = rxmsg.buf[1];
                     frames61.DATA3 = rxmsg.buf[2];
@@ -764,13 +795,14 @@ void Can1_things() {
                     frames61.DATA5 = rxmsg.buf[4];
                     frames61.DATA6 = rxmsg.buf[5];
                     frames61.DATA7 = rxmsg.buf[6];
-                    frames61.DATA8 = rxmsg.buf[7];
+                    frames61.DATA8 = rxmsg.buf[7];*/
 #endif
                     break;
                 case 0x62:
                     break;
                 case 0x80:
 #if CANSART
+/*
                     frames80.DATA1 = rxmsg.buf[0];
                     frames80.DATA2 = rxmsg.buf[1];
                     frames80.DATA3 = rxmsg.buf[2];
@@ -778,11 +810,12 @@ void Can1_things() {
                     frames80.DATA5 = rxmsg.buf[4];
                     frames80.DATA6 = rxmsg.buf[5];
                     frames80.DATA7 = rxmsg.buf[6];
-                    frames80.DATA8 = rxmsg.buf[7];
+                    frames80.DATA8 = rxmsg.buf[7];*/
 #endif
                     break;
                 case 0x200:
 #if CANSART
+/*
                     frames120.DATA1 = rxmsg.buf[0];
                     frames120.DATA2 = rxmsg.buf[1];
                     frames120.DATA3 = rxmsg.buf[2];
@@ -790,7 +823,7 @@ void Can1_things() {
                     frames120.DATA5 = rxmsg.buf[4];
                     frames120.DATA6 = rxmsg.buf[5];
                     frames120.DATA7 = rxmsg.buf[6];
-                    frames120.DATA8 = rxmsg.buf[7];
+                    frames120.DATA8 = rxmsg.buf[7];*/
 #endif
                     break;
                 case 0x202:
@@ -819,13 +852,18 @@ void Can2_things() {
             builDataString(rxmsg2, 2);  // build the data string to be logged to the SD card
             can2rx_status = true;       // set the can1rx_status to true
             // Serial.print(rxmsg2.id);  // print the data string to the serial port
-            if(rxmsg2.id == 0x14){
+            if (rxmsg2.id == 0x14) {
                 HV = rxmsg2.buf[6] << 8 | rxmsg2.buf[7];
-                if (HV > HV_PrechargeVoltage){
-                     digitalWrite(XANATO_PIN, HIGH); 
-                }else{
-                    digitalWrite(XANATO_PIN, LOW); 
+                if (HV > HV_PrechargeVoltage) {
+                    digitalWrite(XANATO_PIN, HIGH);
+                } else {
+                    digitalWrite(XANATO_PIN, LOW);
                 }
+            }
+            if (rxmsg2.id == 0x14) {
+                HV500_RPM = rxmsg2.buf[0] << 24 | rxmsg2.buf[1] << 16 | rxmsg2.buf[2] << 8 | rxmsg2.buf[3];
+                // HV500_RPM = rxmsg2.buf[2];
+                // HV500_RPM = HV500_RPM * (-1);
             }
         }
     }
@@ -868,7 +906,6 @@ void StartUpSequence() {
     }
 }
 
-
 void BUTTON_LED_TASK(void) {
     static uint8_t blinkCount = 0;
     static bool isPauseMode = false;
@@ -901,3 +938,56 @@ void BUTTON_LED_TASK(void) {
         }
     }
 }
+
+// %%%%%%%%%%%%%%%%%%%%%%%%%%%%%% END %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+// CANSART VARS
+
+uint16_t RPM = 0;
+uint16_t InputVoltage = 0;
+uint16_t ACCurrent = 0;
+uint16_t DCCurrent = 0;
+
+uint8_t INVTemp = 0;
+uint8_t MotorTemp = 0;
+bool DriveEnable = false;
+uint8_t VCUState = 0;
+uint8_t TCUState = 0;
+uint8_t DLState = 0;
+uint8_t ACUState = 0;
+uint8_t PCState = 0;
+
+#if CANSART
+
+void updateCANSART(void) {
+    RPM = 300;
+
+    frames61.DATA1 = RPM >> 8;
+    frames61.DATA2 = RPM;
+    frames61.DATA3 = InputVoltage >> 8;
+    frames61.DATA4 = InputVoltage;
+    frames61.DATA5 = ACCurrent >> 8;
+    frames61.DATA6 = ACCurrent;
+    frames61.DATA7 = DCCurrent >> 8;
+    frames61.DATA8 = DCCurrent;
+
+    INVTemp = 10;
+
+    frames62.DATA1 = INVTemp;
+    frames62.DATA2 = MotorTemp;
+    frames62.DATA3 = DriveEnable;
+    frames62.DATA4 = VCUState;
+    frames62.DATA5 = TCUState;
+    frames62.DATA6 = DLState;
+    frames62.DATA7 = ACUState;
+    frames62.DATA8 = PCState;
+
+    updateDB(&frames10);
+    updateDB(&frames20);
+    updateDB(&frames60);
+    updateDB(&frames61);
+    updateDB(&frames62);
+    updateDB(&frames121);
+}
+
+#endif
