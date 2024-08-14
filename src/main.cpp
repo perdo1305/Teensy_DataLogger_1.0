@@ -15,22 +15,50 @@
 #include <SoftwareSerial.h>
 #include <Wire.h>
 
-#include "CANSART_STR/src/cansart.h"
+//#include "cansart.h"
+#include "SerialTransfer.h"
 #include "Watchdog_t4.h"
 
 #define CANSART 1
 
 #define HV_PrechargeVoltage 280
 
-#if CANSART
-frame10 frames10;
-frame20 frames20;
-frame60 frames60;
-frame61 frames61;
-frame62 frames62;
-frame121 frames121;
+//Set SerialTransfer
+SerialTransfer myTransfer;
 
-HardwareSerial& serialPort = Serial5;
+#if CANSART
+
+int k = 0;
+
+struct frame
+{
+uint8_t ID ;
+uint8_t DATA1 ;
+uint8_t DATA2 ;
+uint8_t DATA3 ;
+uint8_t DATA4 ;
+uint8_t DATA5 ;
+uint8_t DATA6 ;
+uint8_t DATA7 ;
+uint8_t DATA8 ;
+uint8_t LENGHT ;
+};
+
+//frame frame11;
+//frame frame20;
+//frame frame30;
+//frame frame60;
+//frame frame121;
+
+struct STRUCT {
+  frame frames11;
+  frame frames20;
+  frame frames30;
+  frame frames60;
+  frame frames121;
+} os;
+
+//HardwareSerial& serialPort = Serial5;
 #endif
 
 // #define rx7Pin 28
@@ -147,7 +175,8 @@ long long HV500_RPM = 0;  // rpm from inverter
 float CAN_Bus_Data[50];
 IntervalTimer TelemetryTimer;
 void sendTelemetry(void);
-void updateCANSART(void);
+void updateData(void);
+void SetFrames(void);
 
 void wdtCallback() {
     Serial.println("FEED THE DOG SOON, OR RESET!");
@@ -175,7 +204,12 @@ void setup() {
 
     // Hardware
 #if CANSART
-    setCANSART_Driver(serialPort, (unsigned long)115200);
+//    setCANSART_Driver(serialPort, (unsigned long)115200);
+    os.frames11.ID = 11;
+    os.frames20.ID = 20;
+    os.frames30.ID = 30;
+    os.frames60.ID = 60;
+    os.frames121.ID = 121;
 #endif
     // Serial7.setRX(28);
     // Serial7.begin(9600);  // Telemetria
@@ -362,6 +396,9 @@ void setup() {
     StartUpSequence();
     DataLoggerActive = true;
     // logging_active = false;
+    
+    Serial5.begin(115200);
+    myTransfer.begin(Serial5);
 }
 
 void loop() {
@@ -396,7 +433,7 @@ void loop() {
 
 #if CANSART
 
-    updateCANSART();
+    updateData();
    // Serial5.println("ola");
    /*
     if (Serial5.available()) {
@@ -959,35 +996,55 @@ uint8_t PCState = 0;
 
 #if CANSART
 
-void updateCANSART(void) {
+void updateData(void) {
+    SetFrames();
     RPM = 300;
 
-    frames61.DATA1 = RPM >> 8;
-    frames61.DATA2 = RPM;
-    frames61.DATA3 = InputVoltage >> 8;
-    frames61.DATA4 = InputVoltage;
-    frames61.DATA5 = ACCurrent >> 8;
-    frames61.DATA6 = ACCurrent;
-    frames61.DATA7 = DCCurrent >> 8;
-    frames61.DATA8 = DCCurrent;
+    os.frames20.DATA1 = RPM >> 8;
+    os.frames20.DATA2 = RPM;
+    os.frames20.DATA3 = InputVoltage >> 8;
+    os.frames20.DATA4 = InputVoltage;
+    os.frames20.DATA5 = ACCurrent >> 8;
+    os.frames20.DATA6 = ACCurrent;
+    os.frames20.DATA7 = DCCurrent >> 8;
+    os.frames20.DATA8 = DCCurrent;
 
     INVTemp = 10;
 
-    frames62.DATA1 = INVTemp;
-    frames62.DATA2 = MotorTemp;
-    frames62.DATA3 = DriveEnable;
-    frames62.DATA4 = VCUState;
-    frames62.DATA5 = TCUState;
-    frames62.DATA6 = DLState;
-    frames62.DATA7 = ACUState;
-    frames62.DATA8 = PCState;
+    os.frames60.DATA1 = INVTemp;
+    os.frames60.DATA2 = MotorTemp;
+    os.frames60.DATA3 = DriveEnable;
+    os.frames60.DATA4 = VCUState;
+    os.frames60.DATA5 = TCUState;
+    os.frames60.DATA6 = DLState;
+    os.frames60.DATA7 = ACUState;
+    os.frames60.DATA8 = PCState;
 
-    updateDB(&frames10);
-    updateDB(&frames20);
-    updateDB(&frames60);
-    updateDB(&frames61);
-    updateDB(&frames62);
-    updateDB(&frames121);
+    os.frames30.DATA1 = k;
+    os.frames30.DATA2 = k;
+    os.frames30.DATA3 = k;
+    os.frames30.DATA4 = k;
+    os.frames30.DATA5 = k;
+    os.frames30.DATA6 = k;
+    os.frames30.DATA7 = k;
+    os.frames30.DATA8 = k;
+    k++;
+    if(k>250){
+        k=0;
+    }
+    //updateDB(&frames11);
+    //updateDB(&frames20);
+    //updateDB(&frames60);
+    //updateDB(&frames61);
+    //updateDB(&frames121);
+    myTransfer.sendDatum(os);
+}
+void SetFrames(){
+    os.frames11.ID = 11;
+    os.frames20.ID = 20;
+    os.frames30.ID = 30;
+    os.frames60.ID = 60;
+    os.frames121.ID = 121;
 }
 
 #endif
