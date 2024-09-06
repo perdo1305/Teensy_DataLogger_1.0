@@ -414,6 +414,8 @@ void loop() {
 
     sendDLstatus();  // Send the data logger status to the CAN bus
 
+    
+
     if (millis() - previousMillis[4] > 15) {
         previousMillis[4] = millis();
         if (logging_active) {  // Log the data string to the SD card if logging is active and can1rx_status is true
