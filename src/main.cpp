@@ -12,53 +12,59 @@
 #include <TimeLib.h>
 #include <U8g2lib.h>
 // #include <USBHost_t36.h>
-#include <SoftwareSerial.h>
+
 #include <Wire.h>
 
-//#include "cansart.h"
+// #include "cansart.h"
+#include "../Can-Header-Map/CAN_pwtdb.h"
 #include "SerialTransfer.h"
 #include "Watchdog_t4.h"
 
-#define CANSART 1
+#define CANSART 0
 
 #define HV_PrechargeVoltage 280
 
-//Set SerialTransfer
+// Set SerialTransfer
 SerialTransfer myTransfer;
+
+typedef struct {
+    uint16_t HV500_Actual_Voltage;
+} HV500_t;
+
+HV500_t hv500;
 
 #if CANSART
 
 int k = 0;
 
-struct frame
-{
-uint8_t ID ;
-uint8_t DATA1 ;
-uint8_t DATA2 ;
-uint8_t DATA3 ;
-uint8_t DATA4 ;
-uint8_t DATA5 ;
-uint8_t DATA6 ;
-uint8_t DATA7 ;
-uint8_t DATA8 ;
-uint8_t LENGHT ;
+struct frame {
+    uint8_t ID;
+    uint8_t DATA1;
+    uint8_t DATA2;
+    uint8_t DATA3;
+    uint8_t DATA4;
+    uint8_t DATA5;
+    uint8_t DATA6;
+    uint8_t DATA7;
+    uint8_t DATA8;
+    uint8_t LENGHT;
 };
 
-//frame frame11;
-//frame frame20;
-//frame frame30;
-//frame frame60;
-//frame frame121;
+// frame frame11;
+// frame frame20;
+// frame frame30;
+// frame frame60;
+// frame frame121;
 
 struct STRUCT {
-  frame frames11;
-  frame frames20;
-  frame frames30;
-  frame frames60;
-  frame frames121;
+    frame frames11;
+    frame frames20;
+    frame frames30;
+    frame frames60;
+    frame frames121;
 } os;
 
-//HardwareSerial& serialPort = Serial5;
+// HardwareSerial& serialPort = Serial5;
 #endif
 
 // #define rx7Pin 28
@@ -73,7 +79,7 @@ struct STRUCT {
 #define XANATO_PIN 29
 
 #define ENABLE_INTERRUPT  // uncomment to always log to sd card //fode sd cards
-#define ENABLE_EXTERNAL_BUTTON 1
+#define ENABLE_EXTERNAL_BUTTON 0
 
 #define OPAMP_PIN 4   // pin for ampop interrupt
 #define BUTTON_PIN 5  // pin for button interrupt
@@ -204,7 +210,7 @@ void setup() {
 
     // Hardware
 #if CANSART
-//    setCANSART_Driver(serialPort, (unsigned long)115200);
+    //    setCANSART_Driver(serialPort, (unsigned long)115200);
     os.frames11.ID = 11;
     os.frames20.ID = 20;
     os.frames30.ID = 30;
@@ -342,7 +348,7 @@ void setup() {
         RISING);
 */
 #else
-    logging_active = true;
+    // logging_active = true;
 #endif
 
 #ifdef ENABLE_EXTERNAL_BUTTON
@@ -364,7 +370,7 @@ void setup() {
         },
         RISING);
 #else
-    logging_active = true;
+    // logging_active = true;
 #endif
 
     /*##############################################*/
@@ -396,7 +402,7 @@ void setup() {
     StartUpSequence();
     DataLoggerActive = true;
     // logging_active = false;
-    
+
     Serial5.begin(115200);
     myTransfer.begin(Serial5);
 }
@@ -414,7 +420,17 @@ void loop() {
 
     sendDLstatus();  // Send the data logger status to the CAN bus
 
-    
+    static bool last_logging_active = false;
+    if (hv500.HV500_Actual_Voltage > 60) {
+        logging_active = true;
+        if (last_logging_active == false) {
+            last_logging_active = true;
+            sprintf(FILE_NAME, "LOG_%02d-%02d-%02d_%02d-%02d-%02d.csv", day(), month(), year(), hour(), minute(), second());
+        }
+    } else {
+        last_logging_active = false;
+        logging_active = false;
+    }
 
     if (millis() - previousMillis[4] > 15) {
         previousMillis[4] = millis();
@@ -436,19 +452,18 @@ void loop() {
 #if CANSART
 
     updateData();
-   // Serial5.println("ola");
-   /*
-    if (Serial5.available()) {
-        char buffer[100] = {};
-        Serial5.readBytesUntil('\n', buffer, 100);
+    // Serial5.println("ola");
+    /*
+     if (Serial5.available()) {
+         char buffer[100] = {};
+         Serial5.readBytesUntil('\n', buffer, 100);
 
 
-        Serial.println(buffer);
-    }*/
+         Serial.println(buffer);
+     }*/
 
 #endif
 }
-
 
 /**
  * @brief Blink the built in led at 3.3Hz
@@ -459,8 +474,7 @@ void MCU_heartbeat() {
         previousMillis[1] = currentMillis[1];
         digitalToggle(LED_BUILTIN);
     }
-    //fade the led
-    
+    // fade the led
 }
 
 //_________________________________________________________________________________________________
@@ -524,8 +538,8 @@ void log_to_sdcard() {
     if (dataString == "") {
         return;
     }
-    char FILE_NAME[30] = {};
-    sprintf(FILE_NAME, "LOG_%02d-%02d-%02d_%02d-%02d-%02d.csv", day(), month(), year(), hour(), minute(), second());
+    // char FILE_NAME[30] = {};
+    // sprintf(FILE_NAME, "LOG_%02d-%02d-%02d_%02d-%02d-%02d.csv", day(), month(), year(), hour(), minute(), second());
     File dataFile = SD.open(FILE_NAME, FILE_WRITE);
     dataFile_ptr = &dataFile;
 
@@ -890,20 +904,6 @@ void Can2_things() {
             digitalToggle(LED_GPIO35);  // toggle the can bus rx led
             builDataString(rxmsg2, 2);  // build the data string to be logged to the SD card
             can2rx_status = true;       // set the can1rx_status to true
-            // Serial.print(rxmsg2.id);  // print the data string to the serial port
-            if (rxmsg2.id == 0x14) {
-                HV = rxmsg2.buf[6] << 8 | rxmsg2.buf[7];
-                if (HV > HV_PrechargeVoltage) {
-                    digitalWrite(XANATO_PIN, HIGH);
-                } else {
-                    digitalWrite(XANATO_PIN, LOW);
-                }
-            }
-            if (rxmsg2.id == 0x14) {
-                HV500_RPM = rxmsg2.buf[0] << 24 | rxmsg2.buf[1] << 16 | rxmsg2.buf[2] << 8 | rxmsg2.buf[3];
-                // HV500_RPM = rxmsg2.buf[2];
-                // HV500_RPM = HV500_RPM * (-1);
-            }
         }
     }
 }
@@ -1031,17 +1031,17 @@ void updateData(void) {
     os.frames30.DATA7 = k;
     os.frames30.DATA8 = k;
     k++;
-    if(k>250){
-        k=0;
+    if (k > 250) {
+        k = 0;
     }
-    //updateDB(&frames11);
-    //updateDB(&frames20);
-    //updateDB(&frames60);
-    //updateDB(&frames61);
-    //updateDB(&frames121);
+    // updateDB(&frames11);
+    // updateDB(&frames20);
+    // updateDB(&frames60);
+    // updateDB(&frames61);
+    // updateDB(&frames121);
     myTransfer.sendDatum(os);
 }
-void SetFrames(){
+void SetFrames() {
     os.frames11.ID = 11;
     os.frames20.ID = 20;
     os.frames30.ID = 30;
