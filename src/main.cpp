@@ -12,10 +12,11 @@
 #include <TimeLib.h>
 #include <U8g2lib.h>
 // #include <USBHost_t36.h>
-#include <SoftwareSerial.h>
+
 #include <Wire.h>
 
-//#include "cansart.h"
+// #include "cansart.h"
+#include "../Can-Header-Map/CAN_pwtdb.h"
 #include "SerialTransfer.h"
 #include "Watchdog_t4.h"
 
@@ -27,45 +28,51 @@
 
 RF24 radio(CE_PIN, CSN_PIN);
 
-#define CANSART 1
+#define CANSART 0
 
 #define HV_PrechargeVoltage 280
 
+// Set SerialTransfer
 SerialTransfer myTransfer;
+
+typedef struct {
+    uint16_t HV500_Actual_Voltage;
+} HV500_t;
+
+HV500_t hv500;
 
 #if CANSART
 
 int k = 0;
 
-struct frame
-{
-uint8_t ID ;
-uint8_t DATA1 ;
-uint8_t DATA2 ;
-uint8_t DATA3 ;
-uint8_t DATA4 ;
-uint8_t DATA5 ;
-uint8_t DATA6 ;
-uint8_t DATA7 ;
-uint8_t DATA8 ;
-uint8_t LENGHT ;
+struct frame {
+    uint8_t ID;
+    uint8_t DATA1;
+    uint8_t DATA2;
+    uint8_t DATA3;
+    uint8_t DATA4;
+    uint8_t DATA5;
+    uint8_t DATA6;
+    uint8_t DATA7;
+    uint8_t DATA8;
+    uint8_t LENGHT;
 };
 
-//frame frame11;
-//frame frame20;
-//frame frame30;
-//frame frame60;
-//frame frame121;
+// frame frame11;
+// frame frame20;
+// frame frame30;
+// frame frame60;
+// frame frame121;
 
 struct STRUCT {
-  frame frames11;
-  frame frames20;
-  frame frames30;
-  frame frames60;
-  frame frames121;
+    frame frames11;
+    frame frames20;
+    frame frames30;
+    frame frames60;
+    frame frames121;
 } os;
 
-//HardwareSerial& serialPort = Serial5;
+// HardwareSerial& serialPort = Serial5;
 #endif
 
 // #define rx7Pin 28
@@ -217,7 +224,7 @@ void setup() {
 
     // Hardware
 #if CANSART
-//    setCANSART_Driver(serialPort, (unsigned long)115200);
+    //    setCANSART_Driver(serialPort, (unsigned long)115200);
     os.frames11.ID = 11;
     os.frames20.ID = 20;
     os.frames30.ID = 30;
@@ -359,7 +366,7 @@ void setup() {
         RISING);
 */
 #else
-    logging_active = true;
+    // logging_active = true;
 #endif
 
 #ifdef ENABLE_EXTERNAL_BUTTON
@@ -381,7 +388,7 @@ void setup() {
         },
         RISING);
 #else
-    logging_active = true;
+    // logging_active = true;
 #endif
 
     /*##############################################*/
@@ -413,7 +420,7 @@ void setup() {
     StartUpSequence();
     DataLoggerActive = true;
     // logging_active = false;
-    
+
     Serial5.begin(115200);
     myTransfer.begin(Serial5);
 }
@@ -456,19 +463,18 @@ void loop() {
 #if CANSART
 
     updateData();
-   // Serial5.println("ola");
-   /*
-    if (Serial5.available()) {
-        char buffer[100] = {};
-        Serial5.readBytesUntil('\n', buffer, 100);
+    // Serial5.println("ola");
+    /*
+     if (Serial5.available()) {
+         char buffer[100] = {};
+         Serial5.readBytesUntil('\n', buffer, 100);
 
 
-        Serial.println(buffer);
-    }*/
+         Serial.println(buffer);
+     }*/
 
 #endif
 }
-
 
 /**
  * @brief Blink the built in led at 3.3Hz
@@ -479,8 +485,7 @@ void MCU_heartbeat() {
         previousMillis[1] = currentMillis[1];
         digitalToggle(LED_BUILTIN);
     }
-    //fade the led
-    
+    // fade the led
 }
 
 //_________________________________________________________________________________________________
@@ -1016,17 +1021,17 @@ void updateData(void) {
     os.frames30.DATA7 = k;
     os.frames30.DATA8 = k;
     k++;
-    if(k>250){
-        k=0;
+    if (k > 250) {
+        k = 0;
     }
-    //updateDB(&frames11);
-    //updateDB(&frames20);
-    //updateDB(&frames60);
-    //updateDB(&frames61);
-    //updateDB(&frames121);
+    // updateDB(&frames11);
+    // updateDB(&frames20);
+    // updateDB(&frames60);
+    // updateDB(&frames61);
+    // updateDB(&frames121);
     myTransfer.sendDatum(os);
 }
-void SetFrames(){
+void SetFrames() {
     os.frames11.ID = 11;
     os.frames20.ID = 20;
     os.frames30.ID = 30;
