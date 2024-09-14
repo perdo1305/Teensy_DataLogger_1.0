@@ -19,11 +19,18 @@
 #include "SerialTransfer.h"
 #include "Watchdog_t4.h"
 
+#include "printf.h"
+#include "RF24.h"
+
+#define CE_PIN 9
+#define CSN_PIN 10
+
+RF24 radio(CE_PIN, CSN_PIN);
+
 #define CANSART 1
 
 #define HV_PrechargeVoltage 280
 
-//Set SerialTransfer
 SerialTransfer myTransfer;
 
 #if CANSART
@@ -73,7 +80,7 @@ struct STRUCT {
 #define XANATO_PIN 29
 
 #define ENABLE_INTERRUPT  // uncomment to always log to sd card //fode sd cards
-#define ENABLE_EXTERNAL_BUTTON 1
+#define ENABLE_EXTERNAL_BUTTON 0
 
 #define OPAMP_PIN 4   // pin for ampop interrupt
 #define BUTTON_PIN 5  // pin for button interrupt
@@ -126,6 +133,8 @@ void Can2_things(void);                                                        /
 void Can3_things(void);                                                        // Do the can3 receive things
 void StartUpSequence(void);                                                    // LEDs startup sequence
 void BUTTON_LED_TASK(void);                                                    // Blink the button led
+void createNewFile(void);                                                      // Create a new file to log to the SD card
+void FadeLed(void);                                                            // Fade the led
 
 WDT_T4<WDT1> wdt;                                                 // Watchdog timer config
 U8X8_SSD1306_128X64_NONAME_HW_I2C u8x8(SCL, SDA, U8X8_PIN_NONE);  // OLED contructor
@@ -135,8 +144,10 @@ U8X8_SSD1306_128X64_NONAME_HW_I2C u8x8(SCL, SDA, U8X8_PIN_NONE);  // OLED contru
 
 volatile bool logging_active = false;    // If the logging is active or not
 volatile bool DataLoggerActive = false;  // If the data logger is active or not
-char FILE_NAME[30] = {};                 // Name of the file to be logged to the SD card
+char FILE_NAME[50] = {};                 // Name of the file to be logged to the SD card
+const char* folderName = "logs";         // Folder name to store the logs
 String dataString = "";                  // String to be logged to the SD card
+
 int file_count = 0;                      // Count how many files are in the SD card
 int file_num_int = 0;                    // Keep track of the datalog.txt file number
 int file_num_plus_one = 0;               // Keep track of the datalog.txt file number
@@ -181,7 +192,9 @@ void SetFrames(void);
 void wdtCallback() {
     Serial.println("FEED THE DOG SOON, OR RESET!");
 }
+
 // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%% SETUP %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 void setup() {
     setSyncProvider(getTeensy3Time);  // Set the Time library to use Teensy 3.0's RTC to keep time
 #ifdef __Telemetria_ON__
@@ -272,17 +285,6 @@ void setup() {
     // write the incremented number to the file
     dataFile = SD.open("config.txt", FILE_WRITE);
 
-    // count how many files are in the SD card
-    File root = SD.open("/");
-    while (true) {
-        File entry = root.openNextFile();
-        if (!entry) {
-            break;
-        }
-        file_count++;
-        entry.close();
-    }
-    root.close();
     if (dataFile) {
         char buffer[20] = {};
         sprintf(buffer, "%d", file_num_plus_one);
@@ -295,6 +297,20 @@ void setup() {
         Serial.println("error opening config.txt");
     }
 
+    // count how many files are in the SD card
+    /*
+    File root = SD.open("/");
+    while (true) {
+        File entry = root.openNextFile();
+        if (!entry) {
+            break;
+        }
+        file_count++;
+        entry.close();
+    }
+    root.close();
+    */
+    
     // ###################################################################################################
 
     Serial.println("█▀▀ ▄▀█ █▄░█   █▄▄ █░█ █▀   █▀▄ ▄▀█ ▀█▀ ▄▀█   █░░ █▀█ █▀▀ █▀▀ █▀▀ █▀█");
@@ -312,8 +328,9 @@ void setup() {
 
     attachInterrupt(  // attach interrupt to opamp protection pin
         digitalPinToInterrupt(OPAMP_PIN), []() {
-            if (dataFile_ptr != nullptr)
+            if (dataFile_ptr != nullptr){
                 dataFile_ptr->close();
+            }
         },
         RISING);
 
@@ -410,15 +427,18 @@ void loop() {
     Can2_things();  // Do the can2 receive things
     Can3_things();  // Do the can3 receive things
 
-    BUTTON_LED_TASK();
+    BUTTON_LED_TASK(); // Blink the button led on the cockpit
 
     sendDLstatus();  // Send the data logger status to the CAN bus
 
+    if((HV > 60) && !logging_active){
+        createNewFile();
+        logging_active = true; // start logging
+    }
     
-
-    if (millis() - previousMillis[4] > 15) {
+    if (millis() - previousMillis[4] > 15) { // log to sd card every 15ms
         previousMillis[4] = millis();
-        if (logging_active) {  // Log the data string to the SD card if logging is active and can1rx_status is true
+        if (logging_active) { 
             log_to_sdcard();
             digitalToggle(LED_GPIO33);
         } else {
@@ -427,7 +447,7 @@ void loop() {
     }
 
 #ifdef __Screen_ON__
-    if (millis() - previousMillis[3] > 200) {
+    if (millis() - previousMillis[3] > 333) {
         previousMillis[3] = millis();
         displayDataLoggerStatus();  // Display the data logger status on the OLED
     }
@@ -516,16 +536,11 @@ unsigned long processSyncMessage() {
  * @brief log the data string to the SD card
  */
 void log_to_sdcard() {
-    /*
-    char file_name[20] = {};
-    sprintf(file_name, "datalog_%d.csv", file_num_int);
-    */
-    // dataString += "ola; \n";
-    if (dataString == "") {
+
+    if (dataString == "" || !logging_active) {
         return;
     }
-    char FILE_NAME[30] = {};
-    sprintf(FILE_NAME, "LOG_%02d-%02d-%02d_%02d-%02d-%02d.csv", day(), month(), year(), hour(), minute(), second());
+
     File dataFile = SD.open(FILE_NAME, FILE_WRITE);
     dataFile_ptr = &dataFile;
 
@@ -533,10 +548,8 @@ void log_to_sdcard() {
         dataFile.print(dataString);
         dataFile.close();
         dataFile_ptr = nullptr;
-        // print to the serial port too:
-        // Serial.println(dataString);
     } else {
-        // if the file isn't open, pop up an error:
+
         Serial.println("error opening LOG file");
     }
     dataString = "";
@@ -560,12 +573,7 @@ void builDataString(CAN_message_t msg) {
 }
 */
 void builDataString(CAN_message_t msg, uint8_t can_identifier) {
-    /*
-    dataString += String(hour());
-    dataString += csvSuffixer(minute());
-    dataString += csvSuffixer(second());
-    dataString += csvSuffixer(milliseconds_calculation());
-*/
+
     // HH:MM:SS.mmm;
     dataString += String(hour());
     dataString += ":";
@@ -894,6 +902,7 @@ void Can2_things() {
             if (rxmsg2.id == 0x14) {
                 HV = rxmsg2.buf[6] << 8 | rxmsg2.buf[7];
                 if (HV > HV_PrechargeVoltage) {
+                    
                     digitalWrite(XANATO_PIN, HIGH);
                 } else {
                     digitalWrite(XANATO_PIN, LOW);
@@ -946,35 +955,11 @@ void StartUpSequence() {
 }
 
 void BUTTON_LED_TASK(void) {
-    static uint8_t blinkCount = 0;
-    static bool isPauseMode = false;
-    static unsigned long lastChangeTime = 0;
-    unsigned long currentMillis = millis();
 
     if (logging_active) {
         digitalWrite(Button_LED, HIGH);
     } else {
-        if (isPauseMode) {
-            digitalWrite(Button_LED, LOW);
-            if (currentMillis - lastChangeTime > 1000) {
-                lastChangeTime = currentMillis;
-                isPauseMode = false;
-            }
-        } else {
-            if (blinkCount < 3) {
-                if ((digitalRead(Button_LED) == HIGH && currentMillis - lastChangeTime > 375) ||
-                    (digitalRead(Button_LED) == LOW && currentMillis - lastChangeTime > 100)) {
-                    digitalWrite(Button_LED, !digitalRead(Button_LED));
-                    lastChangeTime = currentMillis;
-                    if (digitalRead(Button_LED) == HIGH) {
-                        blinkCount++;
-                    }
-                }
-            } else {
-                blinkCount = 0;
-                isPauseMode = true;
-            }
-        }
+        FadeLed();
     }
 }
 
@@ -1050,3 +1035,51 @@ void SetFrames(){
 }
 
 #endif
+
+/// @brief Fade the dashboard data logger led
+/// @param  
+void FadeLed(void) {
+
+  static int brightness = 0;                   // Current LED brightness
+  static int fadeAmount = 5;                   // How much to change the brightness each step
+  static unsigned long previousMillis = 0;     // Stores the last time the LED was updated
+  const unsigned long interval = 30;           // Interval at which to update the brightness (in milliseconds)
+
+  unsigned long currentMillis = millis();      // Get the current time
+
+  // Check if it's time to update the LED brightness
+  if (currentMillis - previousMillis >= interval) {
+    previousMillis = currentMillis; // Save the current time
+
+    // Update the brightness for the fade effect
+    brightness += fadeAmount;
+
+    // Reverse the fade direction if brightness reaches the limits
+    if (brightness <= 0 || brightness >= 255) {
+      fadeAmount = -fadeAmount;
+    }
+
+    // Set the LED brightness
+    analogWrite(Button_LED, brightness);
+  }
+}
+
+void createNewFile(void) {
+
+    // Create the folder if it doesn't exist
+    if (!SD.exists(folderName)) {
+        SD.mkdir(folderName);
+    }
+
+    // Format the file name with the folder path
+    sprintf(FILE_NAME, "%s/LOG_%02d-%02d-%02d_%02d-%02d-%02d.csv", folderName, day(), month(), year(), hour(), minute(), second());
+
+    // Open the file in the folder
+    File dataFile = SD.open(FILE_NAME, FILE_WRITE);
+    if (dataFile) {
+        dataFile_ptr = &dataFile;
+        dataFile.close();
+    } else {
+        Serial.println("Error opening file");
+    }
+}
