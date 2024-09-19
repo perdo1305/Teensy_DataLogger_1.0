@@ -17,11 +17,10 @@
 
 // #include "cansart.h"
 #include "../Can-Header-Map/CAN_pwtdb.h"
+#include "RF24.h"
 #include "SerialTransfer.h"
 #include "Watchdog_t4.h"
-
 #include "printf.h"
-#include "RF24.h"
 
 #define CE_PIN 9
 #define CSN_PIN 10
@@ -155,11 +154,11 @@ char FILE_NAME[50] = {};                 // Name of the file to be logged to the
 const char* folderName = "logs";         // Folder name to store the logs
 String dataString = "";                  // String to be logged to the SD card
 
-int file_count = 0;                      // Count how many files are in the SD card
-int file_num_int = 0;                    // Keep track of the datalog.txt file number
-int file_num_plus_one = 0;               // Keep track of the datalog.txt file number
-File* dataFile_ptr;                      // Pointer to the datafile to be closed by the interrupt
-bool SD_card_status = false;             // If the SD card is present and initialized
+int file_count = 0;           // Count how many files are in the SD card
+int file_num_int = 0;         // Keep track of the datalog.txt file number
+int file_num_plus_one = 0;    // Keep track of the datalog.txt file number
+File* dataFile_ptr;           // Pointer to the datafile to be closed by the interrupt
+bool SD_card_status = false;  // If the SD card is present and initialized
 
 // ________Millis()________
 unsigned long currentMillis[10] = {};   // Array to hold the current time
@@ -317,7 +316,7 @@ void setup() {
     }
     root.close();
     */
-    
+
     // ###################################################################################################
 
     Serial.println("█▀▀ ▄▀█ █▄░█   █▄▄ █░█ █▀   █▀▄ ▄▀█ ▀█▀ ▄▀█   █░░ █▀█ █▀▀ █▀▀ █▀▀ █▀█");
@@ -335,11 +334,20 @@ void setup() {
 
     attachInterrupt(  // attach interrupt to opamp protection pin
         digitalPinToInterrupt(OPAMP_PIN), []() {
-            if (dataFile_ptr != nullptr){
+            if (dataFile_ptr != nullptr) {
                 dataFile_ptr->close();
             }
         },
         RISING);
+
+    attachInterrupt(
+        digitalPinToInterrupt(BUTTON_PIN), []() {
+            if (!logging_active) {
+                createNewFile();
+            }
+            logging_active = !logging_active;
+        },
+        FALLING);
 
 #ifdef ENABLE_INTERRUPT
 /*
@@ -381,7 +389,7 @@ void setup() {
                 logging_active = !logging_active;
 
                 if (logging_active) {
-                    sprintf(FILE_NAME, "LOG_%02d-%02d-%02d_%02d-%02d-%02d.csv", day(), month(), year(), hour(), minute(), second());
+                    // sprintf(FILE_NAME, "LOG_%02d-%02d-%02d_%02d-%02d-%02d.csv", day(), month(), year(), hour(), minute(), second());
                 }
             }
             previousMillis[2] = millis();
@@ -399,7 +407,7 @@ void setup() {
     can2.begin();
     can2.setBaudRate(1000000);
     can3.begin();
-    can3.setBaudRate(1000000);
+    can3.setBaudRate(250000);
     /*##############################################*/
 
 #ifdef __Screen_ON__
@@ -434,18 +442,18 @@ void loop() {
     Can2_things();  // Do the can2 receive things
     Can3_things();  // Do the can3 receive things
 
-    BUTTON_LED_TASK(); // Blink the button led on the cockpit
+    BUTTON_LED_TASK();  // Blink the button led on the cockpit
 
     sendDLstatus();  // Send the data logger status to the CAN bus
 
-    if((HV > 60) && !logging_active){
+    if ((HV > 60) && !logging_active) {
         createNewFile();
-        logging_active = true; // start logging
+        logging_active = true;  // start logging
     }
-    
-    if (millis() - previousMillis[4] > 15) { // log to sd card every 15ms
+
+    if (millis() - previousMillis[4] > 15) {  // log to sd card every 15ms
         previousMillis[4] = millis();
-        if (logging_active) { 
+        if (logging_active) {
             log_to_sdcard();
             digitalToggle(LED_GPIO33);
         } else {
@@ -541,7 +549,6 @@ unsigned long processSyncMessage() {
  * @brief log the data string to the SD card
  */
 void log_to_sdcard() {
-
     if (dataString == "" || !logging_active) {
         return;
     }
@@ -554,7 +561,6 @@ void log_to_sdcard() {
         dataFile.close();
         dataFile_ptr = nullptr;
     } else {
-
         Serial.println("error opening LOG file");
     }
     dataString = "";
@@ -578,7 +584,6 @@ void builDataString(CAN_message_t msg) {
 }
 */
 void builDataString(CAN_message_t msg, uint8_t can_identifier) {
-
     // HH:MM:SS.mmm;
     dataString += String(hour());
     dataString += ":";
@@ -907,7 +912,6 @@ void Can2_things() {
             if (rxmsg2.id == 0x14) {
                 HV = rxmsg2.buf[6] << 8 | rxmsg2.buf[7];
                 if (HV > HV_PrechargeVoltage) {
-                    
                     digitalWrite(XANATO_PIN, HIGH);
                 } else {
                     digitalWrite(XANATO_PIN, LOW);
@@ -960,7 +964,6 @@ void StartUpSequence() {
 }
 
 void BUTTON_LED_TASK(void) {
-
     if (logging_active) {
         digitalWrite(Button_LED, HIGH);
     } else {
@@ -1042,35 +1045,33 @@ void SetFrames() {
 #endif
 
 /// @brief Fade the dashboard data logger led
-/// @param  
+/// @param
 void FadeLed(void) {
+    static int brightness = 0;                // Current LED brightness
+    static int fadeAmount = 5;                // How much to change the brightness each step
+    static unsigned long previousMillis = 0;  // Stores the last time the LED was updated
+    const unsigned long interval = 30;        // Interval at which to update the brightness (in milliseconds)
 
-  static int brightness = 0;                   // Current LED brightness
-  static int fadeAmount = 5;                   // How much to change the brightness each step
-  static unsigned long previousMillis = 0;     // Stores the last time the LED was updated
-  const unsigned long interval = 30;           // Interval at which to update the brightness (in milliseconds)
+    unsigned long currentMillis = millis();  // Get the current time
 
-  unsigned long currentMillis = millis();      // Get the current time
+    // Check if it's time to update the LED brightness
+    if (currentMillis - previousMillis >= interval) {
+        previousMillis = currentMillis;  // Save the current time
 
-  // Check if it's time to update the LED brightness
-  if (currentMillis - previousMillis >= interval) {
-    previousMillis = currentMillis; // Save the current time
+        // Update the brightness for the fade effect
+        brightness += fadeAmount;
 
-    // Update the brightness for the fade effect
-    brightness += fadeAmount;
+        // Reverse the fade direction if brightness reaches the limits
+        if (brightness <= 0 || brightness >= 255) {
+            fadeAmount = -fadeAmount;
+        }
 
-    // Reverse the fade direction if brightness reaches the limits
-    if (brightness <= 0 || brightness >= 255) {
-      fadeAmount = -fadeAmount;
+        // Set the LED brightness
+        analogWrite(Button_LED, brightness);
     }
-
-    // Set the LED brightness
-    analogWrite(Button_LED, brightness);
-  }
 }
 
 void createNewFile(void) {
-
     // Create the folder if it doesn't exist
     if (!SD.exists(folderName)) {
         SD.mkdir(folderName);
