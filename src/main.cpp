@@ -378,6 +378,7 @@ void setup() {
 #endif
 
 #ifdef ENABLE_EXTERNAL_BUTTON
+/*
     attachInterrupt(  // attach interrupt to the button pin
         digitalPinToInterrupt(Button_Cockpit), []() {
             // debounce
@@ -395,6 +396,7 @@ void setup() {
             previousMillis[2] = millis();
         },
         RISING);
+        */
 #else
     // logging_active = true;
 #endif
@@ -1072,7 +1074,7 @@ void FadeLed(void) {
 }
 
 void createNewFile(void) {
-    // Create the folder if it doesn't exist
+    
     if (!SD.exists(folderName)) {
         SD.mkdir(folderName);
     }
