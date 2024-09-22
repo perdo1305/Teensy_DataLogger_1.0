@@ -17,73 +17,51 @@
 
 // #include "cansart.h"
 #include "../Can-Header-Map/CAN_pwtdb.h"
-#include "RF24.h"
+#include "RF24.h"  // for nRF24L01
 #include "SerialTransfer.h"
 #include "Watchdog_t4.h"
-#include "printf.h"
 
 #define CE_PIN 9
 #define CSN_PIN 10
 
-RF24 radio(CE_PIN, CSN_PIN);
-
-#define CANSART 0
-
-#define HV_PrechargeVoltage 280
-
-// Set SerialTransfer
-SerialTransfer myTransfer;
+// RF24 radio(CE_PIN, CSN_PIN);
 
 typedef struct {
-    uint16_t HV500_Actual_Voltage;
+    uint16_t ERPM;
+    uint16_t Duty;
+    uint16_t InputVoltage;
+
+    uint16_t ACCurrent;
+    uint16_t DCCurrent;
+
+    uint16_t TempController;
+    uint16_t TempMotor;
+    uint8_t FaultCode;
+
+    uint32_t FOC_id;
+    uint32_t FOC_iq;
+
+    uint8_t Throttle;
+    uint8_t Brake;
+    uint8_t Digital_input_1;
+    uint8_t Digital_input_2;
+    uint8_t Digital_input_3;
+    uint8_t Digital_input_4;
+    uint8_t Digital_output_1;
+    uint8_t Digital_output_2;
+    uint8_t Digital_output_3;
+    uint8_t Digital_output_4;
+    uint8_t Drive_enable;
+    uint8_t Capacitor_temp_limit;
+    uint8_t DC_current_limit;
+    uint8_t Drive_enable_limit;
 } HV500_t;
-
 HV500_t hv500;
-
-#if CANSART
-
-int k = 0;
-
-struct frame {
-    uint8_t ID;
-    uint8_t DATA1;
-    uint8_t DATA2;
-    uint8_t DATA3;
-    uint8_t DATA4;
-    uint8_t DATA5;
-    uint8_t DATA6;
-    uint8_t DATA7;
-    uint8_t DATA8;
-    uint8_t LENGHT;
-};
-
-// frame frame11;
-// frame frame20;
-// frame frame30;
-// frame frame60;
-// frame frame121;
-
-struct STRUCT {
-    frame frames11;
-    frame frames20;
-    frame frames30;
-    frame frames60;
-    frame frames121;
-} os;
-
-// HardwareSerial& serialPort = Serial5;
-#endif
-
-// #define rx7Pin 28
-// #define tx7Pin 29
-
-// SoftwareSerial MySerial7(rx7Pin, tx7Pin);  // RX, TX
 
 //________________________________________________________________________________________________
 //__________________________________Defines_________________________________________________________
 //________________________________________________________________________________________________
 #define DataLogger_CanId 0x200
-#define XANATO_PIN 29
 
 #define ENABLE_INTERRUPT  // uncomment to always log to sd card //fode sd cards
 #define ENABLE_EXTERNAL_BUTTON 0
@@ -108,7 +86,7 @@ struct STRUCT {
 #define LED_GPIO35 35
 #define LED_GPIO36 36
 
-#define Button_LED 37
+#define COCKPIT_BUTTON 37
 #define Button_Cockpit 28
 
 // #define __Telemetria_ON__  // descomentar quando for para o carro
@@ -117,7 +95,6 @@ struct STRUCT {
 //__________________________________Function prototypes___________________________________________
 //________________________________________________________________________________________________
 void MCU_heartbeat(void);  // Blink the built in led at 3.3Hz
-void CAN_hearbeat(void);   // Blink the can bus rx led at 3.3Hz
 
 unsigned long processSyncMessage(void);
 void RTC_update_by_serial(void);        // Update the RTC by serial port if available
@@ -134,13 +111,18 @@ void receiveMarker(CAN_message_t msg, uint16_t id_start, uint16_t buf_index);  /
 void builDataString(CAN_message_t msg, uint8_t can_identifier);                // Build the data string to be logged to the SD card
 void displayWelcome(void);                                                     // Display the welcome message on the OLED
 void displayDataLoggerStatus(void);                                            // Display the data logger status on the OLED
-void Can1_things(void);                                                        // Do the can1 receive things
-void Can2_things(void);                                                        // Do the can2 receive things
-void Can3_things(void);                                                        // Do the can3 receive things
-void StartUpSequence(void);                                                    // LEDs startup sequence
-void BUTTON_LED_TASK(void);                                                    // Blink the button led
-void createNewFile(void);                                                      // Create a new file to log to the SD card
-void FadeLed(void);                                                            // Fade the led
+
+void Can1_things(void);              // Do the can1 receive things
+void Can2_things(void);              // Do the can2 receive things
+void Can3_things(void);              // Do the can3 receive things
+void decodeDataCan1(CAN_message_t);  // Decode the data from the can1 bus
+void decodeDataCan2(CAN_message_t);  // Decode the data from the can2 bus
+void decodeDataCan3(CAN_message_t);  // Decode the data from the can3 bus
+
+void StartUpSequence(void);  // LEDs startup sequence
+void BUTTON_LED_TASK(void);  // Blink the button led
+void createNewFile(void);    // Create a new file to log to the SD card
+void FadeLed(void);          // Fade the led
 
 WDT_T4<WDT1> wdt;                                                 // Watchdog timer config
 U8X8_SSD1306_128X64_NONAME_HW_I2C u8x8(SCL, SDA, U8X8_PIN_NONE);  // OLED contructor
@@ -185,16 +167,6 @@ CAN_message_t txmsg2;  // Struct to hold sent CAN message
 CAN_message_t rxmsg3;  // Struct to hold received CAN message
 CAN_message_t txmsg3;  // Struct to hold sent CAN message
 
-uint16_t HV = 0;          // High voltage
-long long HV500_RPM = 0;  // rpm from inverter
-
-//______Telemetria_______
-float CAN_Bus_Data[50];
-IntervalTimer TelemetryTimer;
-void sendTelemetry(void);
-void updateData(void);
-void SetFrames(void);
-
 void wdtCallback() {
     Serial.println("FEED THE DOG SOON, OR RESET!");
 }
@@ -203,40 +175,20 @@ void wdtCallback() {
 
 void setup() {
     setSyncProvider(getTeensy3Time);  // Set the Time library to use Teensy 3.0's RTC to keep time
-#ifdef __Telemetria_ON__
-    TelemetryTimer.begin(sendTelemetry, 20000);  // interval timer for telemetry
-#endif
 
     pinMode(LED_BUILTIN, OUTPUT);  // initialize the built-in LED pin as an output
-    pinMode(XANATO_PIN, OUTPUT);
+
     digitalWrite(LED_BUILTIN, HIGH);  // turn on the built in led
-    digitalWrite(XANATO_PIN, LOW);    // turn on the built in led
 
     unsigned long OV_millis = 0;  // Overflow millis
     OV_millis = millis();         // Overflow millis
-    // Serial.begin(115200);
+
+    Serial.begin(115200);
     while (!Serial) {
         if (millis() - OV_millis > SERIAL_OPEN_TIMEOUT) {
             break;
         }
     }
-
-    // Hardware
-#if CANSART
-    //    setCANSART_Driver(serialPort, (unsigned long)115200);
-    os.frames11.ID = 11;
-    os.frames20.ID = 20;
-    os.frames30.ID = 30;
-    os.frames60.ID = 60;
-    os.frames121.ID = 121;
-#endif
-    // Serial7.setRX(28);
-    // Serial7.begin(9600);  // Telemetria
-
-    // SoftwareSerial
-    // pinMode(rx7Pin, INPUT);
-    // pinMode(tx7Pin, OUTPUT);
-    // MySerial7.begin(9600);
 
     //  ############################################# RTC ##############################################
     if (timeStatus() != timeSet) {
@@ -303,32 +255,19 @@ void setup() {
         Serial.println("error opening config.txt");
     }
 
-    // count how many files are in the SD card
-    /*
-    File root = SD.open("/");
-    while (true) {
-        File entry = root.openNextFile();
-        if (!entry) {
-            break;
-        }
-        file_count++;
-        entry.close();
-    }
-    root.close();
-    */
-
     // ###################################################################################################
 
     Serial.println("█▀▀ ▄▀█ █▄░█   █▄▄ █░█ █▀   █▀▄ ▄▀█ ▀█▀ ▄▀█   █░░ █▀█ █▀▀ █▀▀ █▀▀ █▀█");
     Serial.println("█▄▄ █▀█ █░▀█   █▄█ █▄█ ▄█   █▄▀ █▀█ ░█░ █▀█   █▄▄ █▄█ █▄█ █▄█ ██▄ █▀▄");
 
     /*############### Record Button ################*/
-    pinMode(BUTTON_PIN, INPUT);
-    pinMode(Button_LED, OUTPUT);
-    digitalWrite(Button_LED, LOW);
+    pinMode(BUTTON_PIN, INPUT);  //
+    pinMode(COCKPIT_BUTTON, OUTPUT);
+    digitalWrite(COCKPIT_BUTTON, LOW);
 
     pinMode(OPAMP_PIN, INPUT_PULLDOWN);
     pinMode(Button_Cockpit, INPUT_PULLUP);
+
     /*############### Update RTC by serial port ################*/
     RTC_update_by_serial();
 
@@ -340,7 +279,7 @@ void setup() {
         },
         RISING);
 
-    attachInterrupt(
+    attachInterrupt(  // attach interrupt to button pin on the pcb
         digitalPinToInterrupt(BUTTON_PIN), []() {
             if (!logging_active) {
                 createNewFile();
@@ -348,58 +287,6 @@ void setup() {
             logging_active = !logging_active;
         },
         FALLING);
-
-#ifdef ENABLE_INTERRUPT
-/*
-    attachInterrupt(  // attach interrupt to the button pin
-        digitalPinToInterrupt(BUTTON_PIN), []() {
-            // debounce
-            if (millis() - previousMillis[2] < 300) {
-                return;
-            }
-            previousMillis[2] = millis();
-            if (dataFile_ptr != nullptr)
-                dataFile_ptr->close();
-
-            logging_active = !logging_active;
-            Serial.println(logging_active ? "Logging started" : "Logging stopped");
-
-            // is first time logging active?create the file name with the current time
-            // static bool firstime = true;
-            if (logging_active) {
-                // firstime = false;
-                sprintf(FILE_NAME, "LOG_%02d-%02d-%02d_%02d-%02d-%02d.csv", day(), month(), year(), hour(), minute(), second());
-            }
-        },
-        RISING);
-*/
-#else
-    // logging_active = true;
-#endif
-
-#ifdef ENABLE_EXTERNAL_BUTTON
-/*
-    attachInterrupt(  // attach interrupt to the button pin
-        digitalPinToInterrupt(Button_Cockpit), []() {
-            // debounce
-            if (millis() - previousMillis[2] < 20) {
-            } else {
-                if (dataFile_ptr != nullptr) {
-                    dataFile_ptr->close();
-                }
-                logging_active = !logging_active;
-
-                if (logging_active) {
-                    // sprintf(FILE_NAME, "LOG_%02d-%02d-%02d_%02d-%02d-%02d.csv", day(), month(), year(), hour(), minute(), second());
-                }
-            }
-            previousMillis[2] = millis();
-        },
-        RISING);
-        */
-#else
-    // logging_active = true;
-#endif
 
     /*##############################################*/
 
@@ -429,10 +316,6 @@ void setup() {
 
     StartUpSequence();
     DataLoggerActive = true;
-    // logging_active = false;
-
-    Serial5.begin(115200);
-    myTransfer.begin(Serial5);
 }
 
 void loop() {
@@ -448,7 +331,7 @@ void loop() {
 
     sendDLstatus();  // Send the data logger status to the CAN bus
 
-    if ((HV > 60) && !logging_active) {
+    if ((hv500.InputVoltage > 60) && !logging_active) {
         createNewFile();
         logging_active = true;  // start logging
     }
@@ -468,21 +351,6 @@ void loop() {
         previousMillis[3] = millis();
         displayDataLoggerStatus();  // Display the data logger status on the OLED
     }
-#endif
-
-#if CANSART
-
-    updateData();
-    // Serial5.println("ola");
-    /*
-     if (Serial5.available()) {
-         char buffer[100] = {};
-         Serial5.readBytesUntil('\n', buffer, 100);
-
-
-         Serial.println(buffer);
-     }*/
-
 #endif
 }
 
@@ -568,23 +436,6 @@ void log_to_sdcard() {
     dataString = "";
 }
 
-/**
- * @brief Build the data string to be logged to the SD card
- */
-/*
-void builDataString(CAN_message_t msg) {
-    dataString += String(hour());
-    dataString += csvSuffixer(minute());
-    dataString += csvSuffixer(second());
-    dataString += csvSuffixer(milliseconds_calculation());
-    dataString += csvSuffixer(rxmsg.id, HEX);
-    dataString += csvSuffixer(rxmsg.len, HEX);
-    for (int i = 0; i < rxmsg.len; i++) {
-        dataString += csvSuffixer(rxmsg.buf[i], HEX);
-    }
-    dataString += "\n";
-}
-*/
 void builDataString(CAN_message_t msg, uint8_t can_identifier) {
     // HH:MM:SS.mmm;
     dataString += String(hour());
@@ -668,11 +519,7 @@ void sendDLstatus() {
         txmsg.buf[4] = 3;
         txmsg.buf[5] = 4;
         txmsg.buf[6] = 5;
-        if (HV > HV_PrechargeVoltage) {
-            txmsg.buf[7] = 1;
-        } else {
-            txmsg.buf[7] = 0;
-        }
+        txmsg.buf[7] = 6;
 
         can1.write(txmsg);
         can2.write(txmsg);
@@ -680,14 +527,12 @@ void sendDLstatus() {
         memset(&txmsg, 0, sizeof(txmsg));
         txmsg.id = 0x510;
         txmsg.len = 2;
-        int32_t HV500_RPM_10 = HV500_RPM / 10;
-        txmsg.buf[0] = HV500_RPM_10 >> 8;
-        txmsg.buf[1] = HV500_RPM_10;
-
+        txmsg.buf[0] = 0x01;
         can3.write(txmsg);
     }
 }
 
+/// @brief display the welcome message on the OLED display
 void displayWelcome() {
     u8x8.setFont(u8x8_font_chroma48medium8_r);
     u8x8.setInverseFont(1);
@@ -698,6 +543,7 @@ void displayWelcome() {
     u8x8.drawString(3, 5, "By : Perdu");
 }
 
+/// @brief Display the data logger status on the OLED display
 void displayDataLoggerStatus() {
     u8x8.setFont(u8x8_font_chroma48medium8_r);
 
@@ -761,188 +607,25 @@ void displayDataLoggerStatus() {
     sprintf(time_str, "Time: %02d:%02d:%02d", hour(), minute(), second());
     u8x8.drawString(0, 5, time_str);
 
-    static int previous_file_num_int = -1;
-    if (previous_file_num_int != file_num_int) {
+    // static int previous_file_num_int = -1;
+    static int previous_hv500_InputVoltage = -1;
+    if (previous_hv500_InputVoltage != hv500.InputVoltage) {
         u8x8.clearLine(6);
         char file_name[20] = {};
         // sprintf(file_name, "File num: %d", file_num_int);
+
         /*
         sprintf(file_name, "File num: %d", file_count);
         u8x8.drawString(0, 6, file_name);
-        previous_file_num_int = file_num_int;*/
+        previous_file_num_int = file_num_int;
+        */
 
-        sprintf(file_name, "RPM: %d", HV500_RPM);
+        sprintf(file_name, "HV: %d", hv500.InputVoltage);
         u8x8.drawString(0, 6, file_name);
     }
 }
 
-#ifdef __Telemetria_ON__
-struct CarData_MAIN {            // 32 Bytes
-    uint16_t RPM = 0;            // 0-65536
-    uint8_t VSPD = 0;            // 0-160
-    uint8_t APPS1 = 0;           // 0-100
-    uint8_t BRAKE = 0;           // 0-1
-    uint8_t DBWPOS = 0;          // 0-100
-    uint8_t LAMBDA = 0;          // 0-2
-    uint8_t OILT = 0;            // 0-160
-    uint8_t OILP = 0;            // 0-12
-    uint16_t ENGT1 = 0;          // 0-1100
-    uint16_t ENGT2 = 0;          // 0-1100
-    uint8_t BATV = 0;            // 0-20
-    uint8_t IAT = 0;             // 0-167 subtrair 40 no labView
-    uint8_t MAP = 0;             // 0-4
-    uint16_t CLT = 0;            // 0-290 subtrair 40 no labView
-    uint8_t FUELP = 0;           // 0-1
-    uint8_t IGNANG = 0;          // 0-20
-    uint8_t CBUSLD = 0;          // 0-100
-    uint8_t LAMCORR = 0;         // 75-125
-    uint8_t ECUT = 0;            // 0-4
-    uint8_t DBWTRGT = 0;         // 0-100
-    uint8_t ACCX = 0;            // 0-20
-    uint8_t DataLoggerSTAT = 0;  // 0-100
-    uint8_t GearValue = 0;       // 0-1
-    uint8_t ROLL = 0;            // 75-125
-    uint8_t PITCH = 0;           // 0-4
-    uint8_t YAW = 0;             // 0-100
-    uint8_t LOGSTAT = 0;         // 0-20
-    char inicio = 10;            // END
-};
-struct CarData_MAIN carDataMain;
-
-void sendTelemetry() {
-}
-
-#endif
-
-// TODO Stearing angle
-void Can1_things() {
-    static CAN_error_t error;
-    if (can1.error(error, 0)) {
-        // Serial.println("CAN1 ERROR");
-        can1rx_status = false;
-        digitalWrite(LED_GPIO34, LOW);  // turn off the can bus rx led
-    } else {
-        if (can1.read(rxmsg)) {
-            switch (rxmsg.id) {
-                case 0x60:
-#if CANSART
-/*
-                    frames60.DATA1 = rxmsg.buf[0];
-                    frames60.DATA2 = rxmsg.buf[1];
-                    frames60.DATA3 = rxmsg.buf[2];
-                    frames60.DATA4 = rxmsg.buf[3];
-                    frames60.DATA5 = rxmsg.buf[4];
-                    frames60.DATA6 = rxmsg.buf[5];
-                    frames60.DATA7 = rxmsg.buf[6];
-                    frames60.DATA8 = rxmsg.buf[7];*/
-#endif
-                    /*
-                        carDataMain.RPM = rxmsg.buf[0] << 8 | rxmsg.buf[1];
-                        carDataMain.OILP = rxmsg.buf[2] << 8 | rxmsg.buf[3];
-                        carDataMain.OILT = rxmsg.buf[4] << 8 | rxmsg.buf[5];
-                        carDataMain.BATV = rxmsg.buf[6] << 8 | rxmsg.buf[7];
-                        */
-                    break;
-                case 0x61:
-                    // carDataMain.VSPD = rxmsg.buf[0] << 8 | rxmsg.buf[1];
-#if CANSART
-/*
-                    frames61.DATA1 = rxmsg.buf[0];
-                    frames61.DATA2 = rxmsg.buf[1];
-                    frames61.DATA3 = rxmsg.buf[2];
-                    frames61.DATA4 = rxmsg.buf[3];
-                    frames61.DATA5 = rxmsg.buf[4];
-                    frames61.DATA6 = rxmsg.buf[5];
-                    frames61.DATA7 = rxmsg.buf[6];
-                    frames61.DATA8 = rxmsg.buf[7];*/
-#endif
-                    break;
-                case 0x62:
-                    break;
-                case 0x80:
-#if CANSART
-/*
-                    frames80.DATA1 = rxmsg.buf[0];
-                    frames80.DATA2 = rxmsg.buf[1];
-                    frames80.DATA3 = rxmsg.buf[2];
-                    frames80.DATA4 = rxmsg.buf[3];
-                    frames80.DATA5 = rxmsg.buf[4];
-                    frames80.DATA6 = rxmsg.buf[5];
-                    frames80.DATA7 = rxmsg.buf[6];
-                    frames80.DATA8 = rxmsg.buf[7];*/
-#endif
-                    break;
-                case 0x200:
-#if CANSART
-/*
-                    frames120.DATA1 = rxmsg.buf[0];
-                    frames120.DATA2 = rxmsg.buf[1];
-                    frames120.DATA3 = rxmsg.buf[2];
-                    frames120.DATA4 = rxmsg.buf[3];
-                    frames120.DATA5 = rxmsg.buf[4];
-                    frames120.DATA6 = rxmsg.buf[5];
-                    frames120.DATA7 = rxmsg.buf[6];
-                    frames120.DATA8 = rxmsg.buf[7];*/
-#endif
-                    break;
-                case 0x202:
-                    // receiveMarker(rxmsg, 0x202, 0);
-                default:
-                    // add ids to filter
-                    break;
-            }
-
-            digitalToggle(LED_GPIO34);  // toggle the can bus rx led
-            builDataString(rxmsg, 1);   // build the data string to be logged to the SD card
-            can1rx_status = true;       // set the can1rx_status to true
-            // Serial.print(rxmsg.id);     // print the data string to the serial port
-        }
-    }
-}
-
-void Can2_things() {
-    static CAN_error_t error;
-    if (can2.error(error, 0)) {
-        can2rx_status = false;
-        digitalWrite(LED_GPIO35, LOW);  // turn off the can bus rx led
-    } else {
-        if (can2.read(rxmsg2)) {
-            digitalToggle(LED_GPIO35);  // toggle the can bus rx led
-            builDataString(rxmsg2, 2);  // build the data string to be logged to the SD card
-            can2rx_status = true;       // set the can1rx_status to true
-            // Serial.print(rxmsg2.id);  // print the data string to the serial port
-            if (rxmsg2.id == 0x14) {
-                HV = rxmsg2.buf[6] << 8 | rxmsg2.buf[7];
-                if (HV > HV_PrechargeVoltage) {
-                    digitalWrite(XANATO_PIN, HIGH);
-                } else {
-                    digitalWrite(XANATO_PIN, LOW);
-                }
-            }
-            if (rxmsg2.id == 0x14) {
-                HV500_RPM = rxmsg2.buf[0] << 24 | rxmsg2.buf[1] << 16 | rxmsg2.buf[2] << 8 | rxmsg2.buf[3];
-                // HV500_RPM = rxmsg2.buf[2];
-                // HV500_RPM = HV500_RPM * (-1);
-            }
-        }
-    }
-}
-
-void Can3_things() {
-    static CAN_error_t error;
-    if (can3.error(error, 0)) {
-        can3rx_status = false;
-        digitalWrite(LED_GPIO36, LOW);  // turn off the can bus rx led
-    } else {
-        if (can3.read(rxmsg3)) {
-            digitalToggle(LED_GPIO36);  // toggle the can bus rx led
-            builDataString(rxmsg3, 3);  // build the data string to be logged to the SD card
-            can3rx_status = true;       // set the can1rx_status to true
-            // Serial.print(rxmsg3.id);  // print the data string to the serial port
-        }
-    }
-}
-
+/// @brief Start up sequence for the LEDs
 void StartUpSequence() {
     const int leds[] = {LED_GPIO33, LED_GPIO34, LED_GPIO35, LED_GPIO36};
     const int numLeds = sizeof(leds) / sizeof(leds[0]);
@@ -965,90 +648,17 @@ void StartUpSequence() {
     }
 }
 
-void BUTTON_LED_TASK(void) {
+/// @brief Blink the button led on the cockpit depending on the logging status
+void BUTTON_LED_TASK() {
     if (logging_active) {
-        digitalWrite(Button_LED, HIGH);
+        digitalWrite(COCKPIT_BUTTON, HIGH);
     } else {
         FadeLed();
     }
 }
 
-// %%%%%%%%%%%%%%%%%%%%%%%%%%%%%% END %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-// CANSART VARS
-
-uint16_t RPM = 0;
-uint16_t InputVoltage = 0;
-uint16_t ACCurrent = 0;
-uint16_t DCCurrent = 0;
-
-uint8_t INVTemp = 0;
-uint8_t MotorTemp = 0;
-bool DriveEnable = false;
-uint8_t VCUState = 0;
-uint8_t TCUState = 0;
-uint8_t DLState = 0;
-uint8_t ACUState = 0;
-uint8_t PCState = 0;
-
-#if CANSART
-
-void updateData(void) {
-    SetFrames();
-    RPM = 300;
-
-    os.frames20.DATA1 = RPM >> 8;
-    os.frames20.DATA2 = RPM;
-    os.frames20.DATA3 = InputVoltage >> 8;
-    os.frames20.DATA4 = InputVoltage;
-    os.frames20.DATA5 = ACCurrent >> 8;
-    os.frames20.DATA6 = ACCurrent;
-    os.frames20.DATA7 = DCCurrent >> 8;
-    os.frames20.DATA8 = DCCurrent;
-
-    INVTemp = 10;
-
-    os.frames60.DATA1 = INVTemp;
-    os.frames60.DATA2 = MotorTemp;
-    os.frames60.DATA3 = DriveEnable;
-    os.frames60.DATA4 = VCUState;
-    os.frames60.DATA5 = TCUState;
-    os.frames60.DATA6 = DLState;
-    os.frames60.DATA7 = ACUState;
-    os.frames60.DATA8 = PCState;
-
-    os.frames30.DATA1 = k;
-    os.frames30.DATA2 = k;
-    os.frames30.DATA3 = k;
-    os.frames30.DATA4 = k;
-    os.frames30.DATA5 = k;
-    os.frames30.DATA6 = k;
-    os.frames30.DATA7 = k;
-    os.frames30.DATA8 = k;
-    k++;
-    if (k > 250) {
-        k = 0;
-    }
-    // updateDB(&frames11);
-    // updateDB(&frames20);
-    // updateDB(&frames60);
-    // updateDB(&frames61);
-    // updateDB(&frames121);
-    myTransfer.sendDatum(os);
-}
-void SetFrames() {
-    os.frames11.ID = 11;
-    os.frames20.ID = 20;
-    os.frames30.ID = 30;
-    os.frames60.ID = 60;
-    os.frames121.ID = 121;
-}
-
-#endif
-
 /// @brief Fade the dashboard data logger led
-/// @param
-void FadeLed(void) {
+void FadeLed() {
     static int brightness = 0;                // Current LED brightness
     static int fadeAmount = 5;                // How much to change the brightness each step
     static unsigned long previousMillis = 0;  // Stores the last time the LED was updated
@@ -1069,12 +679,12 @@ void FadeLed(void) {
         }
 
         // Set the LED brightness
-        analogWrite(Button_LED, brightness);
+        analogWrite(COCKPIT_BUTTON, brightness);
     }
 }
 
-void createNewFile(void) {
-    
+/// @brief create a new file to log to the SD card
+void createNewFile() {
     if (!SD.exists(folderName)) {
         SD.mkdir(folderName);
     }
@@ -1091,3 +701,102 @@ void createNewFile(void) {
         Serial.println("Error opening file");
     }
 }
+
+/// @brief Do the can1 receive things
+void Can1_things() {
+    static CAN_error_t error;
+    if (can1.error(error, 0)) {
+        can1rx_status = false;
+        digitalWrite(LED_GPIO34, LOW);  // turn off the can bus rx led
+    } else {
+        if (can1.read(rxmsg)) {
+            decodeDataCan1(rxmsg);
+            builDataString(rxmsg, 1);  // build the data string to be logged to the SD card
+
+            digitalToggle(LED_GPIO34);  // toggle the can bus rx led
+            can1rx_status = true;       // set the can1rx_status to true
+        }
+    }
+}
+
+/// @brief Do the can2 receive things
+void Can2_things() {
+    static CAN_error_t error;
+    if (can2.error(error, 0)) {
+        can2rx_status = false;
+        digitalWrite(LED_GPIO35, LOW);  // turn off the can bus rx led
+    } else {
+        if (can2.read(rxmsg2)) {
+            decodeDataCan2(rxmsg2);
+            builDataString(rxmsg2, 2);  // build the data string to be logged to the SD card
+
+            digitalToggle(LED_GPIO35);  // toggle the can bus rx led
+            can2rx_status = true;       // set the can1rx_status to true
+        }
+    }
+}
+
+/// @brief Do the can3 receive things
+void Can3_things() {
+    static CAN_error_t error;
+    if (can3.error(error, 0)) {
+        can3rx_status = false;
+        digitalWrite(LED_GPIO36, LOW);  // turn off the can bus rx led
+    } else {
+        if (can3.read(rxmsg3)) {
+            decodeDataCan3(rxmsg3);
+            builDataString(rxmsg3, 3);  // build the data string to be logged to the SD card
+
+            digitalToggle(LED_GPIO36);  // toggle the can bus rx led
+            can3rx_status = true;       // set the can1rx_status to true
+        }
+    }
+}
+
+/// @brief decode the data from the can1 bus
+/// @param canmsg CAN_message_t struct
+void decodeDataCan1(CAN_message_t canmsg) {
+    switch (canmsg.id) {
+        case 0x60:
+            break;
+
+        default:
+            break;
+    }
+}
+
+/// @brief decode the data from the can2 bus
+/// @param canmsg CAN_message_t struct
+void decodeDataCan2(CAN_message_t canmsg) {
+    switch (canmsg.id) {
+        case CAN_HV500_ERPM_DUTY_VOLTAGE_ID:
+            hv500.ERPM = MAP_DECODE_Actual_ERPM(canmsg.buf);
+            // hv500.Duty = MAP_DECODE_Actual_Duty(canmsg.buf);
+            hv500.InputVoltage = MAP_DECODE_Actual_InputVoltage(canmsg.buf);
+            break;
+        case CAN_HV500_AC_DC_current_ID:
+            hv500.ACCurrent = MAP_DECODE_Actual_ACCurrent(canmsg.buf);
+            hv500.DCCurrent = MAP_DECODE_Actual_DCCurrent(canmsg.buf);
+            break;
+        case CAN_HV500_Temperatures_ID:
+            hv500.TempController = MAP_DECODE_Actual_TempController(canmsg.buf);
+            hv500.TempMotor = MAP_DECODE_Actual_TempMotor(canmsg.buf);
+            break;
+        default:
+            break;
+    }
+}
+
+/// @brief decode the data from the can3 bus
+/// @param canmsg CAN_message_t struct
+void decodeDataCan3(CAN_message_t canmsg) {
+    switch (canmsg.id) {
+        case 0x60:
+            break;
+
+        default:
+            break;
+    }
+}
+
+// %%%%%%%%%%%%%%%%%%%%%%%%%%%%%% END %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
