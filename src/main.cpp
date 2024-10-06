@@ -441,7 +441,7 @@ void builDataString(CAN_message_t msg, uint8_t can_identifier) {
 
     // Format elapsed time as SS.sss
     char timeStr[10];
-    snprintf(timeStr, sizeof(timeStr), "%02lu.%03lu", seconds, milliseconds);
+    snprintf(timeStr, sizeof(timeStr), "  %02lu.%03lu", seconds, milliseconds);
 
     dataString += timeStr;
     // if the can id is extended the id needs to have a x in the end of it
@@ -828,16 +828,20 @@ void CreateHeader() {
         // Format the date and time string
         char dateTimeStr[50];
         // TODO MELHORAR ISTO
-        snprintf(dateTimeStr, sizeof(dateTimeStr), "Mon %02d %02d:%02d:%02d.%03d %s %d", day, hourFormat12(), minute, second, millisecond, isAM() ? "am" : "pm", year);
+        // day of the week
+
+        // snprintf(dateTimeStr, sizeof(dateTimeStr), "Mon  %02d %02d:%02d:%02d.%03d %s %d", day, hourFormat12(), minute, second, millisecond, isAM() ? "am" : "pm", year);
 
         // Write the header information
         dataFile.print("date ");
-        dataFile.println(dateTimeStr);
+        // dataFile.println(dateTimeStr);
+        dataFile.println("Wed Oct 2 04:22:06.213 pm 2024");
         dataFile.println("base hex  timestamps absolute");
         dataFile.println("internal events logged");
         dataFile.print("Begin TriggerBlock ");
-        dataFile.println(dateTimeStr);
-        dataFile.println("   0.000000 Start of measurement");
+        dataFile.println("Wed Oct 2 04:22:06.213 pm 2024");  // i know this is wrong
+        // dataFile.println(dateTimeStr);
+        dataFile.println("  0.000000 Start of measurement");
         // dataFile.println("End TriggerBlock");
 
         // Close the file
