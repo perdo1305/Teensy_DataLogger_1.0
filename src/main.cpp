@@ -11,6 +11,9 @@
 #include <SPI.h>
 #include <TimeLib.h>
 #include <U8g2lib.h>
+
+#include <array>
+#include <string>
 // #include <USBHost_t36.h>
 
 #include <Wire.h>
@@ -102,17 +105,18 @@ U8X8_SSD1306_128X64_NONAME_HW_I2C u8x8(SCL, SDA, U8X8_PIN_NONE);  // OLED contru
 //__________________________________Variables______________________________________________________
 //_________________________________________________________________________________________________
 
-volatile bool logging_active = false;    // If the logging is active or not
+volatile bool logging_active = false;  // If the logging is active or not
+unsigned long loggingStartTime = 0;
 volatile bool DataLoggerActive = false;  // If the data logger is active or not
-char FILE_NAME[50] = {};                 // Name of the file to be logged to the SD card
-const char* folderName = "logs";         // Folder name to store the logs
+std::string FILE_NAME;                   // Name of the file to be logged to the SD card
+constexpr char folderName[] = "logs";    // Folder name to store the logs
 String dataString = "";                  // String to be logged to the SD card
 
-int file_count = 0;           // Count how many files are in the SD card
-int file_num_int = 0;         // Keep track of the datalog.txt file number
-int file_num_plus_one = 0;    // Keep track of the datalog.txt file number
-File* dataFile_ptr;           // Pointer to the datafile to be closed by the interrupt
-bool SD_card_status = false;  // If the SD card is present and initialized
+int file_count = 0;            // Count how many files are in the SD card
+int file_num_int = 0;          // Keep track of the datalog.txt file number
+int file_num_plus_one = 0;     // Keep track of the datalog.txt file number
+File* dataFile_ptr = nullptr;  // Pointer to the datafile to be closed by the interrupt
+bool SD_card_status = false;   // If the SD card is present and initialized
 
 // ________Millis()________
 unsigned long currentMillis[10] = {};   // Array to hold the current time
@@ -138,6 +142,9 @@ CAN_message_t txmsg2;  // Struct to hold sent CAN message
 
 CAN_message_t rxmsg3;  // Struct to hold received CAN message
 CAN_message_t txmsg3;  // Struct to hold sent CAN message
+
+void CreateHeader(void);  // Create the header of the file to be logged to the SD card
+void Createfooter(void);  // Create the footer of the file to be logged to the SD card
 
 void wdtCallback() {
     Serial.println("FEED THE DOG SOON, OR RESET!");
@@ -189,6 +196,8 @@ void setup() {
 
     SD_card_status = true;
     Serial.println("card initialized.");
+
+    /*
     // read a number from a file and increment it
     File dataFile = SD.open("config.txt", FILE_READ);
     if (dataFile) {
@@ -225,7 +234,7 @@ void setup() {
     } else {
         // if the file isn't open, pop up an error:
         Serial.println("error opening config.txt");
-    }
+    }*/
 
     // ###################################################################################################
 
@@ -246,6 +255,7 @@ void setup() {
     attachInterrupt(  // attach interrupt to opamp protection pin
         digitalPinToInterrupt(OPAMP_PIN), []() {
             if (dataFile_ptr != nullptr) {
+                Createfooter();
                 dataFile_ptr->close();
             }
         },
@@ -253,8 +263,11 @@ void setup() {
 
     attachInterrupt(  // attach interrupt to button pin on the pcb
         digitalPinToInterrupt(BUTTON_PIN), []() {
-            if (!logging_active) {
+            if (!logging_active) {  // not logging -> start logging
                 createNewFile();
+                CreateHeader();
+            } else {  // logging -> stop logging
+                Createfooter();
             }
             logging_active = !logging_active;
         },
@@ -288,6 +301,10 @@ void setup() {
 
     StartUpSequence();
     DataLoggerActive = true;
+    logging_active = true;
+    loggingStartTime = millis();
+    createNewFile();
+    CreateHeader();
 }
 
 void loop() {
@@ -296,17 +313,19 @@ void loop() {
     MCU_heartbeat();  // Blink the built in led at 3.3Hz
 
     Can1_things();  // Do the can1 receive things
-    Can2_things();  // Do the can2 receive things
-    Can3_things();  // Do the can3 receive things
+    // Can2_things();  // Do the can2 receive things
+    // Can3_things();  // Do the can3 receive things
 
     BUTTON_LED_TASK();  // Blink the button led on the cockpit
 
     sendDLstatus();  // Send the data logger status to the CAN bus
 
+    /*
     if ((hv500.InputVoltage > 60) && !logging_active) {
         createNewFile();
         logging_active = true;  // start logging
     }
+    */
 
     if (millis() - previousMillis[4] > 15) {  // log to sd card every 15ms
         previousMillis[4] = millis();
@@ -395,33 +414,47 @@ void log_to_sdcard() {
         return;
     }
 
-    File dataFile = SD.open(FILE_NAME, FILE_WRITE);
-    dataFile_ptr = &dataFile;
+    File dataFile = SD.open(FILE_NAME.c_str(), FILE_WRITE);
 
     if (dataFile) {
-        dataFile.print(dataString);
+        dataFile.print(dataString.c_str());
         dataFile.close();
-        dataFile_ptr = nullptr;
     } else {
-        Serial.println("error opening LOG file");
+        // Serial.println("Error opening LOG file");
     }
+
     dataString = "";
 }
-
 void builDataString(CAN_message_t msg, uint8_t can_identifier) {
-    // HH:MM:SS.mmm;
-    dataString += String(hour());
-    dataString += ":";
-    dataString += String(minute());
-    dataString += ":";
-    dataString += String(second());
-    dataString += ".";
-    dataString += String(milliseconds_calculation());
-    dataString += csvSuffixer(can_identifier, DEC);
+    // dataString += String(hour());
+    // dataString += ":";
+    // dataString += String(minute());
+    // dataString += ":";
+    // dataString += String(second());
+    // dataString += ".";
+    // dataString += String(milliseconds_calculation());
+
+    // Calculate elapsed time since logging started
+    unsigned long elapsedTime = millis() - loggingStartTime;
+    unsigned long seconds = elapsedTime / 1000;
+    unsigned long milliseconds = elapsedTime % 1000;
+
+    // Format elapsed time as SS.sss
+    char timeStr[10];
+    snprintf(timeStr, sizeof(timeStr), "%02lu.%03lu", seconds, milliseconds);
+
+    dataString += timeStr;
+    // if the can id is extended the id needs to have a x in the end of it
+    if (msg.flags.extended) {
+        dataString += csvSuffixer(can_identifier, HEX) + "x";
+    } else {
+        dataString += csvSuffixer(can_identifier, HEX);
+    }
+
     dataString += csvSuffixer(msg.id, HEX);
-    dataString += csvSuffixer(msg.len, DEC);
+    dataString += csvSuffixer(msg.len, HEX);
     for (int i = 0; i < msg.len; i++) {
-        dataString += csvSuffixer(msg.buf[i], DEC);
+        dataString += csvSuffixer(msg.buf[i], HEX);
     }
     dataString += "\n";
 }
@@ -434,7 +467,7 @@ void builDataString(CAN_message_t msg, uint8_t can_identifier) {
  * @author David Moniz
  */
 String csvSuffixer(int value, int format = DEC) {
-    auto ret = ";" + String(value, format);
+    auto ret = " " + String(value, format);
     return ret;
 }
 
@@ -445,7 +478,7 @@ String csvSuffixer(int value, int format = DEC) {
  * @author David Moniz
  */
 String csvSuffixer(String value) {
-    auto ret = ";" + value;
+    auto ret = " " + value;
     return ret;
 }
 
@@ -660,20 +693,17 @@ void createNewFile() {
     if (!SD.exists(folderName)) {
         SD.mkdir(folderName);
     }
-
-    // Format the file name with the folder path
-    sprintf(FILE_NAME, "%s/LOG_%02d-%02d-%02d_%02d-%02d-%02d.csv", folderName, day(), month(), year(), hour(), minute(), second());
-
-    // Open the file in the folder
-    File dataFile = SD.open(FILE_NAME, FILE_WRITE);
+    FILE_NAME = std::string(folderName) + "/LOG_" + std::to_string(day()) + "-" + std::to_string(month()) + "-" + std::to_string(year()) + "_" + std::to_string(hour()) + "-" + std::to_string(minute()) + "-" + std::to_string(second()) + ".asc";
+    dataFile_ptr = nullptr;
+    File dataFile = SD.open(FILE_NAME.c_str(), FILE_WRITE);
     if (dataFile) {
         dataFile_ptr = &dataFile;
         dataFile.close();
+        dataFile_ptr = nullptr;
     } else {
-        Serial.println("Error opening file");
+        // Serial.println("Error opening file");
     }
 }
-
 /// @brief Do the can1 receive things
 void Can1_things() {
     static CAN_error_t error;
@@ -729,7 +759,8 @@ void Can3_things() {
 /// @param canmsg CAN_message_t struct
 void decodeDataCan1(CAN_message_t canmsg) {
     switch (canmsg.id) {
-        case 0x60:
+        case CAN_HV500_ERPM_DUTY_VOLTAGE_ID:
+            hv500.InputVoltage = MAP_DECODE_Actual_InputVoltage(canmsg.buf);
             break;
 
         default:
@@ -744,7 +775,7 @@ void decodeDataCan2(CAN_message_t canmsg) {
         case CAN_HV500_ERPM_DUTY_VOLTAGE_ID:
             hv500.ERPM = MAP_DECODE_Actual_ERPM(canmsg.buf);
             // hv500.Duty = MAP_DECODE_Actual_Duty(canmsg.buf);
-            hv500.InputVoltage = MAP_DECODE_Actual_InputVoltage(canmsg.buf);
+            // hv500.InputVoltage = MAP_DECODE_Actual_InputVoltage(canmsg.buf);
             break;
         case CAN_HV500_AC_DC_current_ID:
             hv500.ACCurrent = MAP_DECODE_Actual_ACCurrent(canmsg.buf);
@@ -771,4 +802,58 @@ void decodeDataCan3(CAN_message_t canmsg) {
     }
 }
 
+// asc header for file w current time
+
+/*
+date Mon Sep 30 01:52:03.848 pm 2024
+base hex  timestamps absolute
+internal events logged
+Begin TriggerBlock Mon Sep 30 01:52:03.848 pm 2024
+   0.000000 Start of measurement
+End TriggerBlock
+*/
+
+void CreateHeader() {
+    File dataFile = SD.open(FILE_NAME.c_str(), FILE_WRITE);
+    if (dataFile) {
+        // Get the current date and time
+        int year = ::year();
+        int month = ::month();
+        int day = ::day();
+        int hour = ::hour();
+        int minute = ::minute();
+        int second = ::second();
+        int millisecond = millis() % 1000;
+
+        // Format the date and time string
+        char dateTimeStr[50];
+        // TODO MELHORAR ISTO
+        snprintf(dateTimeStr, sizeof(dateTimeStr), "Mon %02d %02d:%02d:%02d.%03d %s %d", day, hourFormat12(), minute, second, millisecond, isAM() ? "am" : "pm", year);
+
+        // Write the header information
+        dataFile.print("date ");
+        dataFile.println(dateTimeStr);
+        dataFile.println("base hex  timestamps absolute");
+        dataFile.println("internal events logged");
+        dataFile.print("Begin TriggerBlock ");
+        dataFile.println(dateTimeStr);
+        dataFile.println("   0.000000 Start of measurement");
+        // dataFile.println("End TriggerBlock");
+
+        // Close the file
+        dataFile.close();
+    } else {
+        Serial.println("Error opening file for writing");
+    }
+}
+
+void Createfooter() {
+    File dataFile = SD.open(FILE_NAME.c_str(), FILE_WRITE);
+    if (dataFile) {
+        dataFile.println("End TriggerBlock");
+        dataFile.close();
+    } else {
+        Serial.println("Error opening file for writing");
+    }
+}
 // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%% END %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
