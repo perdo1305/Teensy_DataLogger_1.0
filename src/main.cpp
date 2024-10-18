@@ -247,7 +247,7 @@ void setup() {
     digitalWrite(COCKPIT_BUTTON, LOW);
 
     pinMode(OPAMP_PIN, INPUT_PULLDOWN);
-    pinMode(Button_Cockpit, INPUT_PULLUP);
+    pinMode(Button_Cockpit, INPUT_PULLDOWN);
 
     /*############### Update RTC by serial port ################*/
     RTC_update_by_serial();
@@ -263,7 +263,17 @@ void setup() {
 
     attachInterrupt(  // attach interrupt to button pin on the pcb
         digitalPinToInterrupt(BUTTON_PIN), []() {
+            // debounce
+            static unsigned long last_interrupt_time = 0;
+            unsigned long interrupt_time = millis();
+            if (interrupt_time - last_interrupt_time > 200) {
+                last_interrupt_time = interrupt_time;
+            } else {
+                return;
+            }
+
             if (!logging_active) {  // not logging -> start logging
+                loggingStartTime = millis();
                 createNewFile();
                 CreateHeader();
             } else {  // logging -> stop logging
@@ -272,6 +282,28 @@ void setup() {
             logging_active = !logging_active;
         },
         FALLING);
+
+    attachInterrupt(  // attach interrupt to button pin on the pcb
+        digitalPinToInterrupt(Button_Cockpit), []() {
+            // debounce
+            static unsigned long last_interrupt_time = 0;
+            unsigned long interrupt_time = millis();
+            if (interrupt_time - last_interrupt_time > 200) {
+                last_interrupt_time = interrupt_time;
+            } else {
+                return;
+            }
+
+            if (!logging_active) {  // not logging -> start logging
+                loggingStartTime = millis();
+                createNewFile();
+                CreateHeader();
+            } else {  // logging -> stop logging
+                Createfooter();
+            }
+            logging_active = !logging_active;
+        },
+        RISING);
 
     /*##############################################*/
 
@@ -301,10 +333,11 @@ void setup() {
 
     StartUpSequence();
     DataLoggerActive = true;
-    logging_active = true;
-    loggingStartTime = millis();
-    createNewFile();
-    CreateHeader();
+
+    // logging_active = true;
+    // loggingStartTime = millis();
+    // createNewFile();
+    // CreateHeader();
 }
 
 void loop() {
@@ -667,7 +700,7 @@ void FadeLed() {
     static int brightness = 0;                // Current LED brightness
     static int fadeAmount = 5;                // How much to change the brightness each step
     static unsigned long previousMillis = 0;  // Stores the last time the LED was updated
-    const unsigned long interval = 30;        // Interval at which to update the brightness (in milliseconds)
+    const unsigned long interval = 20;        // Interval at which to update the brightness (in milliseconds)
 
     unsigned long currentMillis = millis();  // Get the current time
 
