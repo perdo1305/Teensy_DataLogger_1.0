@@ -266,7 +266,7 @@ void setup() {
             // debounce
             static unsigned long last_interrupt_time = 0;
             unsigned long interrupt_time = millis();
-            if (interrupt_time - last_interrupt_time > 200) {
+            if (interrupt_time - last_interrupt_time > 1000) {
                 last_interrupt_time = interrupt_time;
             } else {
                 return;
@@ -283,12 +283,12 @@ void setup() {
         },
         FALLING);
 
-    attachInterrupt(  // attach interrupt to button pin on the pcb
+    attachInterrupt(  // attach interrupt to button pin on the dashboard
         digitalPinToInterrupt(Button_Cockpit), []() {
             // debounce
             static unsigned long last_interrupt_time = 0;
             unsigned long interrupt_time = millis();
-            if (interrupt_time - last_interrupt_time > 200) {
+            if (interrupt_time - last_interrupt_time > 1000) {
                 last_interrupt_time = interrupt_time;
             } else {
                 return;
@@ -320,13 +320,13 @@ void setup() {
     u8x8.setI2CAddress(0x78);
     u8x8.begin();
     displayWelcome();
-    delay(300);
+    delay(100);
     u8x8.clearDisplay();
 #endif
     /*################ WDT #############################################################################*/
     WDT_timings_t config;
-    config.trigger = 5;             /* in seconds, 0->128 Warning trigger before timeout */
-    config.timeout = 10;            /* in seconds, 0->128 Timeout to reset */
+    config.trigger = 1;             /* in seconds, 0->128 Warning trigger before timeout */
+    config.timeout = 2;             /* in seconds, 0->128 Timeout to reset */
     config.callback = wdtCallback;  // Callback function to be called on timeout
     wdt.begin(config);              // Start the watchdog timer
     /*###################################################################################################*/
@@ -346,7 +346,7 @@ void loop() {
     MCU_heartbeat();  // Blink the built in led at 3.3Hz
 
     Can1_things();  // Do the can1 receive things
-    // Can2_things();  // Do the can2 receive things
+    Can2_things();  // Do the can2 receive things
     // Can3_things();  // Do the can3 receive things
 
     BUTTON_LED_TASK();  // Blink the button led on the cockpit
@@ -466,6 +466,9 @@ void builDataString(CAN_message_t msg, uint8_t can_identifier) {
     // dataString += String(second());
     // dataString += ".";
     // dataString += String(milliseconds_calculation());
+    if (msg.flags.extended) {
+        return;
+    }
 
     // Calculate elapsed time since logging started
     unsigned long elapsedTime = millis() - loggingStartTime;
@@ -477,14 +480,18 @@ void builDataString(CAN_message_t msg, uint8_t can_identifier) {
     snprintf(timeStr, sizeof(timeStr), "  %02lu.%03lu", seconds, milliseconds);
 
     dataString += timeStr;
+
+    dataString += csvSuffixer(can_identifier, HEX);
+
     // if the can id is extended the id needs to have a x in the end of it
-    if (msg.flags.extended) {
-        dataString += csvSuffixer(can_identifier, HEX) + "x";
-    } else {
-        dataString += csvSuffixer(can_identifier, HEX);
-    }
 
     dataString += csvSuffixer(msg.id, HEX);
+
+    // 1.10899999999674 2 21 Rx d 8 2C 1 DC 0 0 28 B9 2C
+
+    dataString += " RX ";
+    dataString += "d ";
+
     dataString += csvSuffixer(msg.len, HEX);
     for (int i = 0; i < msg.len; i++) {
         dataString += csvSuffixer(msg.buf[i], HEX);
